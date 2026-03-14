@@ -87,9 +87,34 @@ Track progress in `docs/IMPLEMENTATION-PLAN.md` § Development Phases.
 
 ## Agent Workflow
 
-See `docs/IMPLEMENTATION-PLAN.md` § Multi-Agent TDD Workflow for the full process. In short:
+See `docs/IMPLEMENTATION-PLAN.md` § Multi-Agent TDD Workflow for the full process.
 
-1. **Planner** breaks phase into stories
-2. **Developer** implements Red/Green/Refactor TDD
-3. **Tester** writes integration tests
-4. **Reviewer** checks quality and spec compliance
+### Invocation
+
+All coding agents MUST be invoked via the **Claude Code CLI** (not as OpenClaw subagents) to get plugin access:
+
+```bash
+claude --print --permission-mode bypassPermissions --model <model> -p "<task prompt>"
+```
+
+### Required Plugins
+
+Installed at `~/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.2/`:
+
+| Plugin Skill | Requirement |
+|-------------|-------------|
+| `test-driven-development` | **MANDATORY** — no production code without failing test first |
+| `subagent-driven-development` | **PRIMARY workflow** — dispatch per task with two-stage review |
+| `writing-plans` | Use for planning phases |
+| `dispatching-parallel-agents` | Use for concurrent story execution |
+| `finishing-a-development-branch` | Use before completing any branch |
+| `verification-before-completion` | Use before marking any task done |
+
+**Code Review Plugin:** Run `/code-review` after each story branch (4 parallel reviewers, ≥80 confidence gate).
+
+### Process
+
+1. **Planner** breaks phase into stories (uses `writing-plans` skill)
+2. **Developer** implements via `subagent-driven-development` + strict `test-driven-development`
+3. **Tester** writes integration tests and runs compliance suites
+4. **Code Review** via `/code-review` — resolve all ≥80 confidence issues before merge

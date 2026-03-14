@@ -454,31 +454,91 @@ Dave::Server.new(
 
 ## 5. Multi-Agent TDD Workflow
 
+### Tooling: Claude Code CLI + Plugins
+
+All coding agents are invoked via the **Claude Code CLI** (not as OpenClaw subagents) so they have access to the installed plugins:
+
+```bash
+claude --print --permission-mode bypassPermissions --model <model> -p "<task prompt>"
+```
+
+**Why CLI, not subagents:** Claude Code CLI loads plugins from `~/.claude/plugins/` which provide enforced TDD workflow, subagent dispatch, and automated code review. These plugins are not available to OpenClaw-spawned subagents.
+
+#### Installed Plugins
+
+**Superpowers Plugin** (`~/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.2/`)
+
+| Skill | Purpose | When Used |
+|-------|---------|-----------|
+| `test-driven-development` | Enforces strict Red/Green/Refactor — no production code without a failing test first | **MANDATORY** for all developer agents |
+| `subagent-driven-development` | Dispatch a fresh subagent per task with two-stage review (spec compliance → code quality) | **PRIMARY workflow** for implementation tasks |
+| `writing-plans` | Structured planning output | Planner agents |
+| `dispatching-parallel-agents` | Run multiple agents concurrently | Parallel story execution within a phase |
+| `requesting-code-review` | Prepare code for review | Developer agents after completing a story |
+| `receiving-code-review` | Process review feedback | Developer agents responding to review |
+| `finishing-a-development-branch` | Branch cleanup, squash, PR preparation | End of each story/feature |
+| `verification-before-completion` | Final checks before marking complete | All agents before finishing |
+
+**Code Review Plugin** — `/code-review` command
+
+Launches 4 parallel review agents:
+1. CLAUDE.md compliance check (x2 agents for coverage)
+2. Bug scan
+3. Git history context review
+
+Each issue scored 0-100; only issues ≥80 confidence reported. Posts PR comment automatically.
+
 ### Agent Roles
 
-| Role | Responsibility | Model Recommendation |
-|------|---------------|---------------------|
-| **Planner** | Breaks phase into stories/tasks, writes specs (Gherkin or RSpec descriptions) | Sonnet (fast, structured) |
-| **Developer** | Implements features Red/Green TDD style | Opus (deep reasoning) |
-| **Tester** | Writes integration/acceptance tests, runs compliance suites | Sonnet |
-| **Reviewer** | Code review for quality, WebDAV spec compliance, Ruby idioms | Opus |
+| Role | Responsibility | Invocation |
+|------|---------------|------------|
+| **Planner** | Breaks phase into stories/tasks, writes specs | `claude --print --permission-mode bypassPermissions --model sonnet -p "..."` |
+| **Developer** | Implements features via strict TDD (Red/Green/Refactor) | `claude --print --permission-mode bypassPermissions --model opus -p "..."` |
+| **Tester** | Writes integration/acceptance tests, runs compliance suites | `claude --print --permission-mode bypassPermissions --model sonnet -p "..."` |
+| **Reviewer** | Automated code review via `/code-review` command | `claude --print --permission-mode bypassPermissions -p "/code-review"` |
+
+### Primary Workflow: Subagent-Driven Development
+
+The `subagent-driven-development` plugin skill is the **primary workflow** for all implementation tasks. It dispatches a fresh subagent per task and performs two-stage review:
+
+1. **Stage 1: Spec compliance review** — does the implementation satisfy the task requirements and RFC 4918?
+2. **Stage 2: Code quality review** — Ruby idioms, SOLID principles, thread safety, test coverage
+
+This replaces ad-hoc agent spawning. The orchestrating agent uses the plugin's dispatch mechanism rather than manually coordinating handoffs.
+
+### Mandatory: Test-Driven Development
+
+All developer agents **MUST** follow the `test-driven-development` plugin skill strictly:
+
+1. **Red** — write a failing test first. No production code until you have a red test.
+2. **Green** — write the minimum code to make the test pass.
+3. **Refactor** — clean up while keeping green.
+4. Commit after each green step.
+
+The plugin enforces this. If a developer agent tries to write production code without a failing test, the plugin will block it.
 
 ### Workflow Per Story
 
 ```
-┌─────────┐     ┌───────────┐     ┌──────────┐     ┌──────────┐
-│ Planner  │────▶│ Developer │────▶│  Tester  │────▶│ Reviewer │
-│          │     │           │     │          │     │          │
-│ • Story  │     │ • Red     │     │ • Integ  │     │ • Code   │
-│ • Tasks  │     │ • Green   │     │   tests  │     │   review │
-│ • Specs  │     │ • Refactor│     │ • Comply │     │ • Spec   │
-│          │     │           │     │   suite  │     │   check  │
-└─────────┘     └───────────┘     └──────────┘     └──────────┘
+┌─────────┐     ┌───────────────────────────┐     ┌──────────────┐
+│ Planner  │────▶│ Developer (via subagent-  │────▶│ /code-review │
+│          │     │ driven-development)       │     │              │
+│ • Story  │     │                           │     │ • 4 parallel │
+│ • Tasks  │     │ • test-driven-development │     │   reviewers  │
+│ • Specs  │     │ • Two-stage review:       │     │ • Score ≥80  │
+│          │     │   1. Spec compliance      │     │ • PR comment │
+│          │     │   2. Code quality         │     │              │
+└─────────┘     └───────────────────────────┘     └──────────────┘
 ```
 
 ### Step-by-Step Process
 
 #### 1. Planner Agent (per phase)
+
+Invoked via: `claude --print --permission-mode bypassPermissions --model sonnet`
+
+Uses the `writing-plans` plugin skill.
+
 - Reads `IMPLEMENTATION-PLAN.md` and `WEBDAV-SPEC.md`
 - Creates task breakdown in `docs/phases/phase-N/TASKS.md`
 - Writes RSpec describe/context stubs (empty `it` blocks with descriptions)
@@ -486,26 +546,52 @@ Dave::Server.new(
 - Outputs: task list, spec skeleton files
 
 #### 2. Developer Agent (per story)
+
+Invoked via: `claude --print --permission-mode bypassPermissions --model opus`
+
+Uses the `subagent-driven-development` and `test-driven-development` plugin skills (mandatory).
+
+- Dispatches via `subagent-driven-development` which handles task scoping and review
 - Reads task from Planner output
 - **Red:** Writes failing spec (or fills in Planner's stub)
 - **Green:** Writes minimal code to pass
 - **Refactor:** Cleans up while keeping green
 - Commits after each green step
-- Outputs: implementation code, passing unit specs
+- Two-stage review runs automatically via the plugin
+- Uses `finishing-a-development-branch` skill to prepare the branch
+- Uses `verification-before-completion` skill before marking done
+- Outputs: implementation code, passing unit specs, clean branch
 
 #### 3. Tester Agent (per story or batch)
+
+Invoked via: `claude --print --permission-mode bypassPermissions --model sonnet`
+
 - Writes integration tests using Rack::Test
 - Runs compliance test suites
 - Tests against real WebDAV clients (litmus test suite) if available
 - Verifies Multi-Status XML responses match spec
 - Outputs: integration specs, compliance report
 
-#### 4. Reviewer Agent (per PR/batch)
-- Reviews code against Ruby style and SOLID principles
-- Cross-references implementation with `WEBDAV-SPEC.md`
-- Checks error handling covers all specified status codes
-- Verifies thread safety
-- Outputs: review comments, approval or change requests
+#### 4. Code Review (per PR/branch)
+
+Invoked via: `claude --print --permission-mode bypassPermissions -p "/code-review"`
+
+This is run **after each story branch is complete**, before merge:
+
+- Launches 4 parallel review agents automatically
+- CLAUDE.md compliance (x2): checks code follows project conventions in AGENTS.md/CLAUDE.md
+- Bug scan: looks for logic errors, edge cases, security issues
+- Git history context: reviews commit messages and change patterns
+- Each issue scored 0-100 confidence; only issues ≥80 are reported
+- Posts summary as PR comment (or to stdout if no PR)
+- **Gate:** Resolve all ≥80 confidence issues before merging
+
+### Parallel Execution
+
+For stories within a phase that have no dependencies, use the `dispatching-parallel-agents` plugin skill to run multiple developer agents concurrently. For example, in Phase 1:
+
+- Story "GET handler" and Story "MKCOL handler" can run in parallel
+- Story "DELETE handler" depends on file creation (PUT), so it runs after
 
 ### Handoff Protocol
 
@@ -516,7 +602,7 @@ docs/phases/phase-N/stories/story-M/
   TASK.md          # Planner output
   DEVELOPER.md     # Developer summary (what was done, decisions made)
   TESTER.md        # Test results and coverage
-  REVIEWER.md      # Review notes
+  REVIEW.md        # /code-review output (issues, scores, resolution)
 ```
 
 ### Proving Spec Compliance
