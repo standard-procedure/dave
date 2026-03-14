@@ -1,4 +1,9 @@
 PATH
+  remote: ../dave-filesystem
+  specs:
+    dave-filesystem (0.1.0)
+
+PATH
   remote: .
   specs:
     dave-server (0.1.0)
@@ -61,12 +66,14 @@ PLATFORMS
   x86_64-linux-musl
 
 DEPENDENCIES
+  dave-filesystem!
   dave-server!
   rack-test
   rspec (~> 3.0)
   simplecov
 
 CHECKSUMS
+  dave-filesystem (0.1.0)
   dave-server (0.1.0)
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
   docile (1.4.1) sha256=96159be799bfa73cdb721b840e9802126e4e03dfc26863db73647204c727f21e
