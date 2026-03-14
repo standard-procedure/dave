@@ -317,6 +317,42 @@ RSpec.describe "PROPPATCH" do
   end
 
   # =========================================================================
+  # lock enforcement
+  # =========================================================================
+  context "lock enforcement" do
+    LOCKINFO_EXCLUSIVE_PROPPATCH = <<~XML.freeze
+      <?xml version="1.0" encoding="UTF-8"?>
+      <D:lockinfo xmlns:D="DAV:">
+        <D:lockscope><D:exclusive/></D:lockscope>
+        <D:locktype><D:write/></D:locktype>
+      </D:lockinfo>
+    XML
+
+    before { File.write(File.join(tmpdir, "locked.txt"), "content") }
+
+    def lock_token_for_proppatch(path)
+      env = { "rack.input" => StringIO.new(LOCKINFO_EXCLUSIVE_PROPPATCH) }
+      custom_request("LOCK", path, {}, env)
+      last_response.headers["Lock-Token"].match(/<(urn:uuid:[^>]+)>/)[1]
+    end
+
+    it "PROPPATCH on locked resource without If header returns 423 Locked" do
+      lock_token_for_proppatch("/locked.txt")
+      proppatch("/locked.txt", body: set_body(["{http://example.com/}author", "Eve"]))
+      expect(last_response.status).to eq(423)
+    end
+
+    it "PROPPATCH on locked resource with correct token in If header returns 207" do
+      token = lock_token_for_proppatch("/locked.txt")
+      proppatch("/locked.txt",
+        body:    set_body(["{http://example.com/}author", "Eve"]),
+        headers: { "HTTP_IF" => "(<#{token}>)" }
+      )
+      expect(last_response.status).to eq(207)
+    end
+  end
+
+  # =========================================================================
   # 10. After successful PROPPATCH, PROPFIND allprop returns the new dead prop
   # =========================================================================
   context "PROPFIND allprop after PROPPATCH" do

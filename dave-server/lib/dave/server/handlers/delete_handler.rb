@@ -4,6 +4,8 @@ module Dave
   class Server
     module Handlers
       class DeleteHandler
+        include LockChecking
+
         def initialize(filesystem, lock_manager, request)
           @filesystem   = filesystem
           @lock_manager = lock_manager
@@ -12,6 +14,8 @@ module Dave
 
         def call
           path = @request.dav_path
+
+          return Response.build(423, {}, "Locked") if locked_without_token?(path)
 
           begin
             failed = @filesystem.delete(path)

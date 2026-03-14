@@ -208,6 +208,66 @@ RSpec.describe "MOVE" do
   end
 
   # =========================================================================
+  # lock enforcement
+  # =========================================================================
+  context "lock enforcement" do
+    LOCKINFO_EXCLUSIVE_MOVE = <<~XML.freeze
+      <?xml version="1.0" encoding="UTF-8"?>
+      <D:lockinfo xmlns:D="DAV:">
+        <D:lockscope><D:exclusive/></D:lockscope>
+        <D:locktype><D:write/></D:locktype>
+      </D:lockinfo>
+    XML
+
+    def lock_token_for_move(path)
+      env = { "rack.input" => StringIO.new(LOCKINFO_EXCLUSIVE_MOVE) }
+      custom_request("LOCK", path, {}, env)
+      last_response.headers["Lock-Token"].match(/<(urn:uuid:[^>]+)>/)[1]
+    end
+
+    context "with a locked source" do
+      before { File.write(File.join(tmpdir, "source.txt"), "hello") }
+
+      it "MOVE with locked source and no If header returns 423 Locked" do
+        lock_token_for_move("/source.txt")
+        move("/source.txt", "HTTP_DESTINATION" => "http://localhost/dest.txt")
+        expect(last_response.status).to eq(423)
+      end
+
+      it "MOVE with locked source and correct token in If header returns 201" do
+        token = lock_token_for_move("/source.txt")
+        move("/source.txt",
+          "HTTP_DESTINATION" => "http://localhost/dest.txt",
+          "HTTP_IF"          => "(<#{token}>)"
+        )
+        expect(last_response.status).to eq(201)
+      end
+    end
+
+    context "with a locked destination" do
+      before do
+        File.write(File.join(tmpdir, "source.txt"), "hello")
+        File.write(File.join(tmpdir, "dest.txt"), "existing")
+      end
+
+      it "MOVE with locked destination and no If header returns 423 Locked" do
+        lock_token_for_move("/dest.txt")
+        move("/source.txt", "HTTP_DESTINATION" => "http://localhost/dest.txt")
+        expect(last_response.status).to eq(423)
+      end
+
+      it "MOVE with locked destination and correct token in If header returns 204" do
+        token = lock_token_for_move("/dest.txt")
+        move("/source.txt",
+          "HTTP_DESTINATION" => "http://localhost/dest.txt",
+          "HTTP_IF"          => "(<#{token}>)"
+        )
+        expect(last_response.status).to eq(204)
+      end
+    end
+  end
+
+  # =========================================================================
   # 9. Dead properties travel with MOVE
   # =========================================================================
   context "dead properties travel with MOVE" do

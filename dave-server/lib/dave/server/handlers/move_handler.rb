@@ -5,6 +5,8 @@ module Dave
   class Server
     module Handlers
       class MoveHandler
+        include LockChecking
+
         def initialize(filesystem, lock_manager, request)
           @filesystem   = filesystem
           @lock_manager = lock_manager
@@ -25,6 +27,9 @@ module Dave
           return Response.build(403, {}, "Forbidden: source and destination are the same") if src == dst
 
           overwrite = parse_overwrite(@request.env["HTTP_OVERWRITE"])
+
+          return Response.build(423, {}, "Locked") if locked_without_token?(src)
+          return Response.build(423, {}, "Locked") if locked_without_token?(dst)
 
           begin
             result = @filesystem.move(src, dst, overwrite: overwrite)
