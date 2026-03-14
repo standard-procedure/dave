@@ -1,1 +1,4 @@
 .worktrees/
+
+# Coverage reports
+**/coverage/
