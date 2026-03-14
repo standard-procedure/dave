@@ -154,22 +154,69 @@ RSpec.describe Dave::Properties do
     end
 
     context "{DAV:}supportedlock" do
-      it "returns empty string for files" do
-        expect(Dave::Properties.live_property(file_resource, "{DAV:}supportedlock")).to eq("")
+      it "returns exclusive+shared write lock entries for files" do
+        result = Dave::Properties.live_property(file_resource, "{DAV:}supportedlock")
+        expect(result).to include("<D:lockentry")
+        expect(result).to include("<D:exclusive/>")
+        expect(result).to include("<D:shared/>")
+        expect(result).to include("<D:write/>")
       end
 
-      it "returns empty string for collections" do
-        expect(Dave::Properties.live_property(collection_resource, "{DAV:}supportedlock")).to eq("")
+      it "returns exclusive+shared write lock entries for collections" do
+        result = Dave::Properties.live_property(collection_resource, "{DAV:}supportedlock")
+        expect(result).to include("<D:lockentry")
+        expect(result).to include("<D:exclusive/>")
+        expect(result).to include("<D:shared/>")
+        expect(result).to include("<D:write/>")
       end
     end
 
     context "{DAV:}lockdiscovery" do
-      it "returns empty string for files" do
+      it "returns empty string when no lock_manager given" do
         expect(Dave::Properties.live_property(file_resource, "{DAV:}lockdiscovery")).to eq("")
       end
 
-      it "returns empty string for collections" do
-        expect(Dave::Properties.live_property(collection_resource, "{DAV:}lockdiscovery")).to eq("")
+      it "returns empty string when lock_manager is nil" do
+        expect(Dave::Properties.live_property(file_resource, "{DAV:}lockdiscovery", lock_manager: nil)).to eq("")
+      end
+
+      it "returns empty string when no locks exist for the resource" do
+        lock_manager = Dave::LockManager.new
+        result = Dave::Properties.live_property(file_resource, "{DAV:}lockdiscovery", lock_manager: lock_manager)
+        expect(result).to eq("")
+      end
+
+      it "returns activelock XML when a lock exists for the resource" do
+        lock_manager = Dave::LockManager.new
+        lock_manager.acquire(file_resource.path, scope: :exclusive, depth: :infinity, timeout: 3600)
+        result = Dave::Properties.live_property(file_resource, "{DAV:}lockdiscovery", lock_manager: lock_manager)
+        expect(result).to include("<D:activelock")
+        expect(result).to include("<D:exclusive/>")
+        expect(result).to include("<D:write/>")
+        expect(result).to include("Second-3600")
+      end
+
+      it "returns activelock XML with infinite timeout" do
+        lock_manager = Dave::LockManager.new
+        lock_manager.acquire(file_resource.path, scope: :shared, depth: :zero, timeout: :infinite)
+        result = Dave::Properties.live_property(file_resource, "{DAV:}lockdiscovery", lock_manager: lock_manager)
+        expect(result).to include("<D:activelock")
+        expect(result).to include("<D:shared/>")
+        expect(result).to include("Infinite")
+      end
+
+      it "returns activelock XML with owner when owner provided" do
+        lock_manager = Dave::LockManager.new
+        lock_manager.acquire(file_resource.path, scope: :exclusive, depth: :zero, owner: "<D:href>http://example.com/user</D:href>")
+        result = Dave::Properties.live_property(file_resource, "{DAV:}lockdiscovery", lock_manager: lock_manager)
+        expect(result).to include("<D:owner>")
+        expect(result).to include("http://example.com/user")
+      end
+
+      it "returns empty string for collections with no locks" do
+        lock_manager = Dave::LockManager.new
+        result = Dave::Properties.live_property(collection_resource, "{DAV:}lockdiscovery", lock_manager: lock_manager)
+        expect(result).to eq("")
       end
     end
 
@@ -220,11 +267,11 @@ RSpec.describe Dave::Properties do
         expect(props["{DAV:}resourcetype"]).to eq("")
       end
 
-      it "includes supportedlock as empty string" do
-        expect(props["{DAV:}supportedlock"]).to eq("")
+      it "includes supportedlock with lock entry XML" do
+        expect(props["{DAV:}supportedlock"]).to include("<D:lockentry")
       end
 
-      it "includes lockdiscovery as empty string" do
+      it "includes lockdiscovery as empty string (no lock_manager)" do
         expect(props["{DAV:}lockdiscovery"]).to eq("")
       end
 

@@ -15,9 +15,9 @@ RSpec.describe "OPTIONS" do
     expect(last_response.status).to eq(200)
   end
 
-  it "OPTIONS * returns DAV: 1 header" do
+  it "OPTIONS * returns DAV: 1, 2 header" do
     options "*"
-    expect(last_response.headers["DAV"]).to eq("1")
+    expect(last_response.headers["DAV"]).to eq("1, 2")
   end
 
   it "OPTIONS * returns Allow header with all methods" do
@@ -32,7 +32,7 @@ RSpec.describe "OPTIONS" do
   it "OPTIONS /path returns same headers" do
     options "/some/path"
     expect(last_response.status).to eq(200)
-    expect(last_response.headers["DAV"]).to eq("1")
+    expect(last_response.headers["DAV"]).to eq("1, 2")
     allow_header = last_response.headers["Allow"]
     Dave::Server::ALLOWED_METHODS.each do |method|
       expect(allow_header).to include(method)

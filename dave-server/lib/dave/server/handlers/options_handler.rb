@@ -11,7 +11,7 @@ module Dave
         def call
           Response.build(200, {
             "Allow"          => Dave::Server::ALLOWED_METHODS.join(", "),
-            "DAV"            => "1",
+            "DAV"            => "1, 2",
             "Content-Length" => "0",
           }, "")
         end

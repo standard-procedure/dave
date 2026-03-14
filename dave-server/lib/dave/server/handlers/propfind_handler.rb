@@ -109,7 +109,7 @@ module Dave
 
         # Build propstats for a single resource.
         def build_propstats(path, resource, request_type)
-          live_props = Dave::Properties.live_properties(resource)
+          live_props = Dave::Properties.live_properties(resource, lock_manager: @lock_manager)
           dead_props = @filesystem.get_properties(path)
 
           case request_type
