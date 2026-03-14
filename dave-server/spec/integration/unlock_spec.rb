@@ -29,7 +29,7 @@ RSpec.describe "UNLOCK" do
     { "D" => "DAV:" }
   end
 
-  LOCKINFO_EXCLUSIVE = <<~XML.freeze
+  UNLOCK_LOCKINFO_EXCLUSIVE = <<~XML.freeze
     <?xml version="1.0" encoding="UTF-8"?>
     <D:lockinfo xmlns:D="DAV:">
       <D:lockscope><D:exclusive/></D:lockscope>
@@ -39,7 +39,7 @@ RSpec.describe "UNLOCK" do
 
   # Helper: acquire a lock on the given path and return the raw token string
   def acquire_lock(path)
-    lock(path, {}, LOCKINFO_EXCLUSIVE)
+    lock(path, {}, UNLOCK_LOCKINFO_EXCLUSIVE)
     token_header = last_response.headers["Lock-Token"]
     token_header.match(/<(urn:uuid:[^>]+)>/)[1]
   end
@@ -75,7 +75,7 @@ RSpec.describe "UNLOCK" do
       expect(last_response.status).to eq(204)
 
       # Now re-lock — should succeed with 200
-      lock("/file.txt", {}, LOCKINFO_EXCLUSIVE)
+      lock("/file.txt", {}, UNLOCK_LOCKINFO_EXCLUSIVE)
       expect(last_response.status).to eq(200)
     end
   end
