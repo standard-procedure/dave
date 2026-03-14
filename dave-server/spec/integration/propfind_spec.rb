@@ -349,7 +349,19 @@ RSpec.describe "PROPFIND" do
   end
 
   # =========================================================================
-  # 10. Missing Depth header → treats as infinity → 403
+  # 10. Invalid Depth header value → 400 Bad Request
+  # =========================================================================
+  context "invalid Depth header value" do
+    before { File.write(File.join(tmpdir, "file.txt"), "data") }
+
+    it "returns 400 for an invalid Depth header value" do
+      propfind("/file.txt", body: ALLPROP_BODY, headers: { "HTTP_DEPTH" => "garbage" })
+      expect(last_response.status).to eq(400)
+    end
+  end
+
+  # =========================================================================
+  # 11. Missing Depth header → treats as infinity → 403 (renumbered)
   # =========================================================================
   context "missing Depth header" do
     before { File.write(File.join(tmpdir, "file.txt"), "data") }

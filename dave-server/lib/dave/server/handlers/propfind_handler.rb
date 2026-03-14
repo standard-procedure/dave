@@ -16,6 +16,7 @@ module Dave
 
         def call
           depth = parse_depth
+          return Response.build(400, {}, "Invalid Depth header") if depth == :invalid
           return forbidden_infinite_depth unless depth
 
           path     = @request.dav_path
@@ -35,15 +36,15 @@ module Dave
 
         private
 
-        # Returns the Depth as an integer (0 or 1), or nil for infinity.
+        # Returns the Depth as an integer (0 or 1), nil for infinity/missing, or :invalid for unknown values.
         def parse_depth
           raw = @request.get_header("HTTP_DEPTH")
           case raw
           when "0"        then 0
           when "1"        then 1
           when "infinity" then nil
-          when nil        then nil  # missing header → treat as infinity
-          else                 nil  # unknown value → treat as infinity
+          when nil        then nil      # missing header → treat as infinity
+          else                 :invalid # unknown value → 400 Bad Request
           end
         end
 
