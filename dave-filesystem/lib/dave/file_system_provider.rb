@@ -3,6 +3,7 @@ require "dave/errors"
 require "dave/file_system_interface"
 require "digest"
 require "fileutils"
+require "json"
 
 module Dave
   class FileSystemProvider
@@ -10,7 +11,6 @@ module Dave
 
     def initialize(root:)
       @root = File.expand_path(root)
-      @properties = {}
     end
 
     # ──────────────────────────────────────────────
@@ -29,7 +29,7 @@ module Dave
       return nil unless File.exist?(abs)
       return nil unless File.directory?(abs)
 
-      entries = Dir.entries(abs).reject { |e| e == "." || e == ".." }
+      entries = Dir.entries(abs).reject { |e| [".", "..", ".dave-props"].include?(e) }
       entries.map do |name|
         child_abs = File.join(abs, name)
         child_path = path.chomp("/") + "/" + name
@@ -82,6 +82,11 @@ module Dave
       else
         File.delete(abs)
       end
+
+      # Clean up sidecar
+      sp = sidecar_path(path)
+      File.delete(sp) if File.exist?(sp)
+
       []
     end
 
@@ -102,21 +107,49 @@ module Dave
     end
 
     # ──────────────────────────────────────────────
-    # Phase 2+ stubs: properties
+    # Phase 2: properties (persistent sidecar JSON files)
     # ──────────────────────────────────────────────
 
     def get_properties(path)
-      @properties[path] || {}
+      sp = sidecar_path(path)
+      return {} unless File.exist?(sp)
+
+      parse_sidecar(File.read(sp))
     end
 
     def set_properties(path, properties)
-      @properties[path] ||= {}
-      @properties[path].merge!(properties)
+      abs = absolute(path)
+      raise Dave::NotFoundError, "Resource not found: #{path}" unless File.exist?(abs)
+
+      sp = sidecar_path(path)
+      FileUtils.mkdir_p(File.dirname(sp))
+
+      File.open(sp, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_EX)
+        existing = parse_sidecar(f.read)
+        merged = existing.merge(properties)
+        f.rewind
+        f.write(JSON.generate(merged))
+        f.truncate(f.pos)
+      end
+      properties
     end
 
     def delete_properties(path, names)
-      return unless @properties[path]
-      names.each { |name| @properties[path].delete(name) }
+      abs = absolute(path)
+      raise Dave::NotFoundError, "Resource not found: #{path}" unless File.exist?(abs)
+      sp = sidecar_path(path)
+      return unless File.exist?(sp)
+
+      File.open(sp, File::RDWR) do |f|
+        f.flock(File::LOCK_EX)
+        existing = parse_sidecar(f.read)
+        names.each { |n| existing.delete(n) }
+        f.rewind
+        f.write(JSON.generate(existing))
+        f.truncate(f.pos)
+      end
+      nil
     end
 
     # ──────────────────────────────────────────────
@@ -168,6 +201,40 @@ module Dave
     def get_lock(path) = raise NotImplementedError
 
     private
+
+    # Converts a resource path to its sidecar JSON file path inside .dave-props/.
+    #
+    # Examples (given @root = "/data"):
+    #   /documents/report.pdf  →  /data/.dave-props/documents/report.pdf.json
+    #   /documents/            →  /data/.dave-props/documents/.json
+    #   /                      →  /data/.dave-props/.json
+    def parse_sidecar(content)
+      return {} if content.nil? || content.strip.empty?
+      JSON.parse(content)
+    rescue JSON::ParserError
+      {}
+    end
+
+    def sidecar_path(path)
+      # Validate no traversal segments
+      segments = path.split("/")
+      raise Dave::NotFoundError, "Invalid path: #{path}" if segments.any? { |s| s == ".." }
+
+      # Normalise: strip leading slash, preserve trailing slash as a marker
+      is_collection = path.end_with?("/")
+      stripped = path.sub(%r{\A/}, "").sub(%r{/\z}, "")
+
+      if stripped.empty?
+        # Root collection: /.json inside .dave-props
+        File.join(@root, ".dave-props", ".json")
+      elsif is_collection
+        # Collection: dir/.json
+        File.join(@root, ".dave-props", stripped, ".json")
+      else
+        # File: path.json
+        File.join(@root, ".dave-props", stripped + ".json")
+      end
+    end
 
     def absolute(path)
       expanded = File.expand_path(File.join(@root, path))

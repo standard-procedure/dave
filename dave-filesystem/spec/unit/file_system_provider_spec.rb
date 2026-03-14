@@ -133,6 +133,25 @@ RSpec.describe Dave::FileSystemProvider do
         expect(children).to all(be_a(Dave::Resource))
       end
     end
+
+    context "when .dave-props directory exists (dead property sidecars)" do
+      before do
+        File.write(File.join(tmpdir, "visible.txt"), "x")
+        # Simulate .dave-props being created by set_properties
+        provider.set_properties("/visible.txt", { "{http://example.com/}tag" => "<tag/>" })
+      end
+
+      it "does not include .dave-props in the results" do
+        paths = provider.list_children("/").map(&:path)
+        expect(paths).not_to include("/.dave-props/")
+        expect(paths).not_to include("/.dave-props")
+      end
+
+      it "still includes the real file" do
+        paths = provider.list_children("/").map(&:path)
+        expect(paths).to include("/visible.txt")
+      end
+    end
   end
 
   # ──────────────────────────────────────────────
