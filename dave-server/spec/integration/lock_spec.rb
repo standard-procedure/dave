@@ -307,7 +307,71 @@ RSpec.describe "LOCK" do
   end
 
   # ===========================================================================
-  # 12. LOCK with missing XML body (no If header) → 400 Bad Request
+  # 12. Shared lock behavior
+  # ===========================================================================
+  context "two shared locks on the same resource" do
+    before { File.write(File.join(tmpdir, "file.txt"), "hello") }
+
+    it "first shared lock returns 200 OK" do
+      lock("/file.txt", {}, LOCKINFO_SHARED)
+      expect(last_response.status).to eq(200)
+    end
+
+    it "second shared lock also returns 200 OK" do
+      lock("/file.txt", {}, LOCKINFO_SHARED)
+      lock("/file.txt", {}, LOCKINFO_SHARED)
+      expect(last_response.status).to eq(200)
+    end
+  end
+
+  context "shared lock then exclusive lock" do
+    before do
+      File.write(File.join(tmpdir, "file.txt"), "hello")
+      lock("/file.txt", {}, LOCKINFO_SHARED)
+    end
+
+    it "returns 423 Locked" do
+      lock("/file.txt", {}, LOCKINFO_EXCLUSIVE)
+      expect(last_response.status).to eq(423)
+    end
+  end
+
+  context "exclusive lock then shared lock" do
+    before do
+      File.write(File.join(tmpdir, "file.txt"), "hello")
+      lock("/file.txt", {}, LOCKINFO_EXCLUSIVE)
+    end
+
+    it "returns 423 Locked" do
+      lock("/file.txt", {}, LOCKINFO_SHARED)
+      expect(last_response.status).to eq(423)
+    end
+  end
+
+  # ===========================================================================
+  # 13. LOCK refresh with token belonging to a different path → 412
+  # ===========================================================================
+  context "LOCK refresh with token belonging to a different path" do
+    before do
+      File.write(File.join(tmpdir, "file.txt"), "hello")
+      File.write(File.join(tmpdir, "other.txt"), "world")
+    end
+
+    let(:other_token) do
+      lock("/other.txt", {}, LOCKINFO_EXCLUSIVE)
+      token_header = last_response.headers["Lock-Token"]
+      token_header.match(/<(urn:uuid:[^>]+)>/)[1]
+    end
+
+    it "returns 412 Precondition Failed" do
+      token = other_token
+      lock("/file.txt", { "HTTP_IF" => "(<#{token}>)" }, nil)
+      expect(last_response.status).to eq(412)
+    end
+  end
+
+  # ===========================================================================
+  # 15. LOCK with missing XML body (no If header) → 400 Bad Request
   # ===========================================================================
   context "LOCK with no body and no If header" do
     before { File.write(File.join(tmpdir, "file.txt"), "hello") }
@@ -319,7 +383,7 @@ RSpec.describe "LOCK" do
   end
 
   # ===========================================================================
-  # 13. LOCK with malformed XML body → 400 Bad Request
+  # 16. LOCK with malformed XML body → 400 Bad Request
   # ===========================================================================
   context "LOCK with malformed XML body" do
     before { File.write(File.join(tmpdir, "file.txt"), "hello") }

@@ -98,6 +98,12 @@ module Dave
           token   = tokens.first
           timeout = parse_timeout(@request.get_header("HTTP_TIMEOUT"))
 
+          # Verify the token belongs to a lock on this path before refreshing.
+          path_locks = @lock_manager.locks_for(@request.dav_path)
+          unless path_locks.any? { |l| l.token == token }
+            return Response.build(412, {}, "Precondition Failed: lock token does not match request path")
+          end
+
           lock = begin
             @lock_manager.refresh(token, timeout: timeout)
           rescue Dave::LockNotFoundError
