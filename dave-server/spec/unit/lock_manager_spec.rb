@@ -149,6 +149,13 @@ RSpec.describe Dave::LockManager do
         manager.refresh("urn:uuid:unknown-token", timeout: 3600)
       }.to raise_error(Dave::LockNotFoundError)
     end
+
+    it "raises LockNotFoundError when the lock has expired" do
+      allow(Time).to receive(:now).and_return(Time.now + 3600)
+      expect {
+        manager.refresh(lock.token, timeout: 7200)
+      }.to raise_error(Dave::LockNotFoundError)
+    end
   end
 
   # ─── release ────────────────────────────────────────────────────────────────
@@ -186,6 +193,12 @@ RSpec.describe Dave::LockManager do
 
     it "returns an empty array when no locks exist" do
       expect(manager.locks_for(path)).to eq([])
+    end
+
+    it "does NOT return expired locks" do
+      manager.acquire(path, scope: :exclusive, depth: :zero, timeout: 1)
+      allow(Time).to receive(:now).and_return(Time.now + 3600)
+      expect(manager.locks_for(path)).to be_empty
     end
   end
 

@@ -34,11 +34,13 @@ module Dave
     end
 
     # Refresh an existing lock (extend timeout). Returns updated LockInfo.
-    # Raises Dave::LockNotFoundError if token not found.
+    # Raises Dave::LockNotFoundError if token not found or lock has expired.
     def refresh(token, timeout:)
+      now = Time.now
       @mutex.synchronize do
         lock = @locks[token]
         raise LockNotFoundError, "Lock not found: #{token}" unless lock
+        raise LockNotFoundError, "Lock has expired: #{token}" if expired?(lock, now)
 
         updated = LockInfo.new(
           token:      lock.token,
@@ -68,12 +70,13 @@ module Dave
       end
     end
 
-    # Returns all active locks (expired or not) that apply to path:
+    # Returns all active (non-expired) locks that apply to path:
     #   - direct locks on the path itself
     #   - depth:infinity locks on ancestor paths
     def locks_for(path)
+      now = Time.now
       @mutex.synchronize do
-        @locks.values.select { |lock| applies_to?(lock, path) }
+        @locks.values.select { |lock| !expired?(lock, now) && applies_to?(lock, path) }
       end
     end
 
