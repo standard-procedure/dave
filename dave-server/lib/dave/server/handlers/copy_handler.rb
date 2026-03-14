@@ -32,7 +32,7 @@ module Dave
             result = @filesystem.copy(src, dst, depth: depth, overwrite: overwrite)
           rescue Dave::AlreadyExistsError
             return Response.build(412, {}, "Precondition Failed: destination exists and Overwrite is F")
-          rescue Dave::NotFoundError => e
+          rescue Dave::NotFoundError
             # Distinguish: if source doesn't exist → 404; if destination parent doesn't exist → 409
             # The filesystem raises NotFoundError for both; check source existence
             resource = @filesystem.get_resource(src)

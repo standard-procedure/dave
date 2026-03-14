@@ -139,6 +139,13 @@ RSpec.describe "COPY" do
       copy("/source.txt")
       expect(last_response.status).to eq(400)
     end
+
+    it "returns 400 for syntactically invalid Destination URI" do
+      File.write(File.join(tmpdir, "source.txt"), "hello")
+      env = Rack::MockRequest.env_for("/source.txt", method: "COPY", "HTTP_DESTINATION" => "://not a valid uri")
+      status, _, _ = app.call(env)
+      expect(status).to eq(400)
+    end
   end
 
   # =========================================================================

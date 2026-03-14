@@ -154,6 +154,29 @@ RSpec.describe "MOVE" do
       move("/source.txt")
       expect(last_response.status).to eq(400)
     end
+
+    it "returns 400 for syntactically invalid Destination URI" do
+      File.write(File.join(tmpdir, "source.txt"), "hello")
+      # Use rack env directly to bypass Rack header normalisation
+      env = Rack::MockRequest.env_for("/source.txt", method: "MOVE", "HTTP_DESTINATION" => "://not a valid uri")
+      status, _, _ = app.call(env)
+      expect(status).to eq(400)
+    end
+  end
+
+  # =========================================================================
+  # 7b. MOVE with absent Overwrite header defaults to T (overwrite)
+  # =========================================================================
+  context "MOVE with absent Overwrite header" do
+    it "defaults to overwrite when Overwrite header is absent" do
+      File.write(File.join(tmpdir, "source.txt"), "hello")
+      File.write(File.join(tmpdir, "dest.txt"), "existing")
+      env = Rack::MockRequest.env_for("/source.txt", method: "MOVE", "HTTP_DESTINATION" => "http://example.org/dest.txt")
+      status, _, _ = app.call(env)
+      expect(status).to eq(204)
+      expect(File.exist?(File.join(tmpdir, "dest.txt"))).to be true
+      expect(File.exist?(File.join(tmpdir, "source.txt"))).to be false
+    end
   end
 
   # =========================================================================
