@@ -29,7 +29,7 @@ module Dave
       return nil unless File.exist?(abs)
       return nil unless File.directory?(abs)
 
-      entries = Dir.entries(abs).reject { |e| e == "." || e == ".." }
+      entries = Dir.entries(abs).reject { |e| [".", "..", ".dave-props"].include?(e) }
       entries.map do |name|
         child_abs = File.join(abs, name)
         child_path = path.chomp("/") + "/" + name
