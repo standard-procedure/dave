@@ -317,4 +317,16 @@ RSpec.describe "LOCK" do
       expect(last_response.status).to eq(400)
     end
   end
+
+  # ===========================================================================
+  # 13. LOCK with malformed XML body → 400 Bad Request
+  # ===========================================================================
+  context "LOCK with malformed XML body" do
+    before { File.write(File.join(tmpdir, "file.txt"), "hello") }
+
+    it "returns 400 Bad Request" do
+      lock("/file.txt", {}, "<not valid xml")
+      expect(last_response.status).to eq(400)
+    end
+  end
 end
