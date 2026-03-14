@@ -2,10 +2,11 @@ module Dave
   class Server
     module Handlers
       class GetHandler
-        def initialize(filesystem, request, head: false)
-          @filesystem = filesystem
-          @request    = request
-          @head       = head
+        def initialize(filesystem, lock_manager, request, head: false)
+          @filesystem   = filesystem
+          @lock_manager = lock_manager
+          @request      = request
+          @head         = head
         end
 
         def call

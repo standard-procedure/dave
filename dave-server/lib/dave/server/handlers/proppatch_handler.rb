@@ -4,9 +4,12 @@ module Dave
   class Server
     module Handlers
       class ProppatchHandler
-        def initialize(filesystem, request)
-          @filesystem = filesystem
-          @request    = request
+        include LockChecking
+
+        def initialize(filesystem, lock_manager, request)
+          @filesystem   = filesystem
+          @lock_manager = lock_manager
+          @request      = request
         end
 
         def call
@@ -15,6 +18,8 @@ module Dave
           # Resource must exist
           resource = @filesystem.get_resource(path)
           return Response.not_found unless resource
+
+          return Response.build(423, {}, "Locked") if locked_without_token?(path)
 
           # Parse the request body
           body = @request.body.read

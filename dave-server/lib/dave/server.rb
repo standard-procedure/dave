@@ -3,10 +3,12 @@ require_relative "errors"
 require_relative "principal"
 require_relative "resource"
 require_relative "lock_info"
+require_relative "lock_manager"
 require_relative "file_system_interface"
 require_relative "security_interface"
 require_relative "server/request"
 require_relative "server/response"
+require_relative "server/lock_checking"
 require_relative "server/handlers/options_handler"
 require_relative "server/handlers/get_handler"
 require_relative "server/handlers/put_handler"
@@ -16,6 +18,8 @@ require_relative "server/handlers/propfind_handler"
 require_relative "server/handlers/proppatch_handler"
 require_relative "server/handlers/copy_handler"
 require_relative "server/handlers/move_handler"
+require_relative "server/handlers/lock_handler"
+require_relative "server/handlers/unlock_handler"
 require_relative "xml"
 require_relative "properties"
 
@@ -29,8 +33,9 @@ module Dave
     ].freeze
 
     def initialize(filesystem:, prefix: "")
-      @filesystem = filesystem
-      @prefix = prefix
+      @filesystem   = filesystem
+      @prefix       = prefix
+      @lock_manager = LockManager.new
     end
 
     def call(env)
@@ -38,16 +43,18 @@ module Dave
       method  = request.request_method.upcase
 
       case method
-      when "OPTIONS"  then Handlers::OptionsHandler.new(@filesystem, request).call
-      when "GET"      then Handlers::GetHandler.new(@filesystem, request).call
-      when "HEAD"     then Handlers::GetHandler.new(@filesystem, request, head: true).call
-      when "PUT"      then Handlers::PutHandler.new(@filesystem, request).call
-      when "MKCOL"    then Handlers::MkcolHandler.new(@filesystem, request).call
-      when "DELETE"   then Handlers::DeleteHandler.new(@filesystem, request).call
-      when "PROPFIND"   then Handlers::PropfindHandler.new(@filesystem, request).call
-      when "PROPPATCH"  then Handlers::ProppatchHandler.new(@filesystem, request).call
-      when "COPY"       then Handlers::CopyHandler.new(@filesystem, request).call
-      when "MOVE"       then Handlers::MoveHandler.new(@filesystem, request).call
+      when "OPTIONS"  then Handlers::OptionsHandler.new(@filesystem, @lock_manager, request).call
+      when "GET"      then Handlers::GetHandler.new(@filesystem, @lock_manager, request).call
+      when "HEAD"     then Handlers::GetHandler.new(@filesystem, @lock_manager, request, head: true).call
+      when "PUT"      then Handlers::PutHandler.new(@filesystem, @lock_manager, request).call
+      when "MKCOL"    then Handlers::MkcolHandler.new(@filesystem, @lock_manager, request).call
+      when "DELETE"   then Handlers::DeleteHandler.new(@filesystem, @lock_manager, request).call
+      when "PROPFIND"   then Handlers::PropfindHandler.new(@filesystem, @lock_manager, request).call
+      when "PROPPATCH"  then Handlers::ProppatchHandler.new(@filesystem, @lock_manager, request).call
+      when "COPY"       then Handlers::CopyHandler.new(@filesystem, @lock_manager, request).call
+      when "MOVE"       then Handlers::MoveHandler.new(@filesystem, @lock_manager, request).call
+      when "LOCK"       then Handlers::LockHandler.new(@filesystem, @lock_manager, request).call
+      when "UNLOCK"     then Handlers::UnlockHandler.new(@filesystem, @lock_manager, request).call
       else
         Response.build(501, {}, "Not Implemented")
       end

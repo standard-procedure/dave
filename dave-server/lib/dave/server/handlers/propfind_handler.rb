@@ -9,9 +9,10 @@ module Dave
           <D:error xmlns:D="DAV:"><D:propfind-finite-depth/></D:error>
         XML
 
-        def initialize(filesystem, request)
-          @filesystem = filesystem
-          @request    = request
+        def initialize(filesystem, lock_manager, request)
+          @filesystem   = filesystem
+          @lock_manager = lock_manager
+          @request      = request
         end
 
         def call
@@ -108,7 +109,7 @@ module Dave
 
         # Build propstats for a single resource.
         def build_propstats(path, resource, request_type)
-          live_props = Dave::Properties.live_properties(resource)
+          live_props = Dave::Properties.live_properties(resource, lock_manager: @lock_manager)
           dead_props = @filesystem.get_properties(path)
 
           case request_type

@@ -5,9 +5,12 @@ module Dave
   class Server
     module Handlers
       class CopyHandler
-        def initialize(filesystem, request)
-          @filesystem = filesystem
-          @request    = request
+        include LockChecking
+
+        def initialize(filesystem, lock_manager, request)
+          @filesystem   = filesystem
+          @lock_manager = lock_manager
+          @request      = request
         end
 
         def call
@@ -27,6 +30,8 @@ module Dave
           return Response.build(400, {}, "Bad Request: Depth: 1 is invalid for COPY") if depth == :invalid
 
           overwrite = parse_overwrite(@request.env["HTTP_OVERWRITE"])
+
+          return Response.build(423, {}, "Locked") if locked_without_token?(dst)
 
           begin
             result = @filesystem.copy(src, dst, depth: depth, overwrite: overwrite)

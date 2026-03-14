@@ -292,8 +292,8 @@ RSpec.describe Dave::FileSystemProvider do
   # ──────────────────────────────────────────────
 
   describe "#supports_locking?" do
-    it "returns false" do
-      expect(provider.supports_locking?).to be false
+    it "returns true" do
+      expect(provider.supports_locking?).to be true
     end
   end
 

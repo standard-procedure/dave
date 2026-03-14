@@ -2,9 +2,12 @@ module Dave
   class Server
     module Handlers
       class PutHandler
-        def initialize(filesystem, request)
-          @filesystem = filesystem
-          @request    = request
+        include LockChecking
+
+        def initialize(filesystem, lock_manager, request)
+          @filesystem   = filesystem
+          @lock_manager = lock_manager
+          @request      = request
         end
 
         def call
@@ -15,6 +18,8 @@ module Dave
           if resource&.collection?
             return Response.method_not_allowed
           end
+
+          return Response.build(423, {}, "Locked") if locked_without_token?(path)
 
           existed = !resource.nil?
 

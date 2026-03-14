@@ -209,6 +209,45 @@ RSpec.describe "COPY" do
   end
 
   # =========================================================================
+  # lock enforcement
+  # =========================================================================
+  context "lock enforcement" do
+    LOCKINFO_EXCLUSIVE_COPY = <<~XML.freeze
+      <?xml version="1.0" encoding="UTF-8"?>
+      <D:lockinfo xmlns:D="DAV:">
+        <D:lockscope><D:exclusive/></D:lockscope>
+        <D:locktype><D:write/></D:locktype>
+      </D:lockinfo>
+    XML
+
+    before do
+      File.write(File.join(tmpdir, "source.txt"), "hello")
+      File.write(File.join(tmpdir, "dest.txt"), "existing")
+    end
+
+    def lock_token_for_copy(path)
+      env = { "rack.input" => StringIO.new(LOCKINFO_EXCLUSIVE_COPY) }
+      custom_request("LOCK", path, {}, env)
+      last_response.headers["Lock-Token"].match(/<(urn:uuid:[^>]+)>/)[1]
+    end
+
+    it "COPY with locked destination and no If header returns 423 Locked" do
+      lock_token_for_copy("/dest.txt")
+      copy("/source.txt", "HTTP_DESTINATION" => "http://localhost/dest.txt")
+      expect(last_response.status).to eq(423)
+    end
+
+    it "COPY with locked destination and correct token in If header returns 204" do
+      token = lock_token_for_copy("/dest.txt")
+      copy("/source.txt",
+        "HTTP_DESTINATION" => "http://localhost/dest.txt",
+        "HTTP_IF"          => "(<#{token}>)"
+      )
+      expect(last_response.status).to eq(204)
+    end
+  end
+
+  # =========================================================================
   # 11. Dead properties travel with copy
   # =========================================================================
   context "dead properties travel with COPY" do

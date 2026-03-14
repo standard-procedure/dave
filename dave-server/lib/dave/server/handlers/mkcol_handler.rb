@@ -2,9 +2,12 @@ module Dave
   class Server
     module Handlers
       class MkcolHandler
-        def initialize(filesystem, request)
-          @filesystem = filesystem
-          @request    = request
+        include LockChecking
+
+        def initialize(filesystem, lock_manager, request)
+          @filesystem   = filesystem
+          @lock_manager = lock_manager
+          @request      = request
         end
 
         def call
@@ -17,6 +20,8 @@ module Dave
             body.rewind
             return Response.unsupported_media_type unless body_content.empty?
           end
+
+          return Response.build(423, {}, "Locked") if locked_without_token?(path)
 
           begin
             @filesystem.create_collection(path)

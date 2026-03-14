@@ -95,7 +95,7 @@ module Dave
     # ──────────────────────────────────────────────
 
     def supports_locking?
-      false
+      true
     end
 
     def quota_available_bytes(path)

@@ -24,7 +24,7 @@ module Dave
     # Returns nil if the property does not apply to this resource.
     # Raises ArgumentError if clark_name is not a known live property — callers
     # must check live?(clark_name) before calling this method.
-    def self.live_property(resource, clark_name)
+    def self.live_property(resource, clark_name, lock_manager: nil)
       raise ArgumentError, "#{clark_name.inspect} is not a live property" unless live?(clark_name)
 
       case clark_name
@@ -51,9 +51,15 @@ module Dave
         # agreed interface contract between Properties and Dave::XML.
         resource.collection? ? '<D:collection xmlns:D="DAV:"/>' : ""
       when "{DAV:}supportedlock"
-        ""
+        '<D:lockentry xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockentry>' \
+        '<D:lockentry xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockentry>'
       when "{DAV:}lockdiscovery"
-        ""
+        if lock_manager
+          locks = lock_manager.locks_for(resource.path)
+          build_lockdiscovery_xml(locks)
+        else
+          ""
+        end
       when "{DAV:}getcontentlanguage"
         nil
       end
@@ -61,11 +67,34 @@ module Dave
 
     # Returns a Hash of clark_name => xml_value_string for all applicable live
     # properties of the given resource. Properties that return nil are excluded.
-    def self.live_properties(resource)
+    def self.live_properties(resource, lock_manager: nil)
       LIVE_PROPS.each_with_object({}) do |clark_name, hash|
-        value = live_property(resource, clark_name)
+        value = live_property(resource, clark_name, lock_manager: lock_manager)
         hash[clark_name] = value unless value.nil?
       end
+    end
+
+    # Builds an XML fragment describing all active locks on a resource.
+    def self.build_lockdiscovery_xml(locks)
+      return "" if locks.empty?
+
+      locks.map do |lock|
+        depth_str   = lock.depth == :infinity ? "infinity" : "0"
+        timeout_str = lock.timeout == :infinite ? "Infinite" : "Second-#{lock.timeout}"
+
+        owner_xml = lock.owner ? "<D:owner>#{lock.owner}</D:owner>\n        " : ""
+
+        <<~XML.strip
+          <D:activelock xmlns:D="DAV:">
+            <D:locktype><D:write/></D:locktype>
+            <D:lockscope><D:#{lock.scope}/></D:lockscope>
+            <D:depth>#{depth_str}</D:depth>
+            #{owner_xml}<D:timeout>#{timeout_str}</D:timeout>
+            <D:locktoken><D:href>#{lock.token}</D:href></D:locktoken>
+            <D:lockroot><D:href>#{lock.path}</D:href></D:lockroot>
+          </D:activelock>
+        XML
+      end.join
     end
   end
 end

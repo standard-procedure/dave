@@ -2,15 +2,16 @@ module Dave
   class Server
     module Handlers
       class OptionsHandler
-        def initialize(filesystem, request)
-          @filesystem = filesystem
-          @request    = request
+        def initialize(filesystem, lock_manager, request)
+          @filesystem   = filesystem
+          @lock_manager = lock_manager
+          @request      = request
         end
 
         def call
           Response.build(200, {
             "Allow"          => Dave::Server::ALLOWED_METHODS.join(", "),
-            "DAV"            => "1",
+            "DAV"            => "1, 2",
             "Content-Length" => "0",
           }, "")
         end

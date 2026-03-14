@@ -10,6 +10,20 @@ RSpec.describe "DELETE" do
 
   after { FileUtils.rm_rf(tmpdir) }
 
+  LOCKINFO_EXCLUSIVE_DELETE = <<~XML.freeze
+    <?xml version="1.0" encoding="UTF-8"?>
+    <D:lockinfo xmlns:D="DAV:">
+      <D:lockscope><D:exclusive/></D:lockscope>
+      <D:locktype><D:write/></D:locktype>
+    </D:lockinfo>
+  XML
+
+  def lock_token_for(path)
+    env = { "rack.input" => StringIO.new(LOCKINFO_EXCLUSIVE_DELETE) }
+    custom_request("LOCK", path, {}, env)
+    last_response.headers["Lock-Token"].match(/<(urn:uuid:[^>]+)>/)[1]
+  end
+
   it "DELETE /file returns 204 and removes the file" do
     File.write(File.join(tmpdir, "todelete.txt"), "content")
     delete "/todelete.txt"
@@ -54,5 +68,21 @@ RSpec.describe "DELETE" do
     expect(response.headers["Content-Type"]).to include("xml")
     expect(response.body).to include("locked-file.txt")
     expect(response.body).to include("500")
+  end
+
+  context "lock enforcement" do
+    before { File.write(File.join(tmpdir, "locked.txt"), "content") }
+
+    it "DELETE of locked resource without If header returns 423 Locked" do
+      lock_token_for("/locked.txt")
+      delete "/locked.txt"
+      expect(last_response.status).to eq(423)
+    end
+
+    it "DELETE of locked resource with correct token in If header returns 204" do
+      token = lock_token_for("/locked.txt")
+      custom_request("DELETE", "/locked.txt", {}, { "HTTP_IF" => "(<#{token}>)" })
+      expect(last_response.status).to eq(204)
+    end
   end
 end
