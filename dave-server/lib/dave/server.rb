@@ -17,6 +17,7 @@ require_relative "server/handlers/propfind_handler"
 require_relative "server/handlers/proppatch_handler"
 require_relative "server/handlers/copy_handler"
 require_relative "server/handlers/move_handler"
+require_relative "server/handlers/lock_handler"
 require_relative "xml"
 require_relative "properties"
 
@@ -50,6 +51,7 @@ module Dave
       when "PROPPATCH"  then Handlers::ProppatchHandler.new(@filesystem, @lock_manager, request).call
       when "COPY"       then Handlers::CopyHandler.new(@filesystem, @lock_manager, request).call
       when "MOVE"       then Handlers::MoveHandler.new(@filesystem, @lock_manager, request).call
+      when "LOCK"       then Handlers::LockHandler.new(@filesystem, @lock_manager, request).call
       else
         Response.build(501, {}, "Not Implemented")
       end
