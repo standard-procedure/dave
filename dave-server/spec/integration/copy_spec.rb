@@ -142,7 +142,7 @@ RSpec.describe "COPY" do
   end
 
   # =========================================================================
-  # 7b. COPY with Depth: 1 → 400 (invalid depth value for COPY)
+  # 8. COPY with Depth: 1 → 400 (invalid depth value for COPY)
   # =========================================================================
   context "COPY with Depth: 1" do
     before { File.write(File.join(tmpdir, "source.txt"), "hello") }
@@ -154,7 +154,7 @@ RSpec.describe "COPY" do
   end
 
   # =========================================================================
-  # 8. COPY collection with Depth: 0 → 201, only empty collection created
+  # 9. COPY collection with Depth: 0 → 201, only empty collection created
   # =========================================================================
   context "COPY collection with Depth: 0" do
     before do
@@ -179,7 +179,7 @@ RSpec.describe "COPY" do
   end
 
   # =========================================================================
-  # 9. COPY collection with Depth: infinity (default) → 201, all members copied
+  # 10. COPY collection with Depth: infinity (default) → 201, all members copied
   # =========================================================================
   context "COPY collection with Depth: infinity (default)" do
     before do
@@ -202,7 +202,7 @@ RSpec.describe "COPY" do
   end
 
   # =========================================================================
-  # 10. Dead properties travel with copy
+  # 11. Dead properties travel with copy
   # =========================================================================
   context "dead properties travel with COPY" do
     before do
