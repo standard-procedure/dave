@@ -82,6 +82,11 @@ module Dave
       else
         File.delete(abs)
       end
+
+      # Clean up sidecar
+      sp = sidecar_path(path)
+      File.delete(sp) if File.exist?(sp)
+
       []
     end
 
@@ -109,9 +114,7 @@ module Dave
       sp = sidecar_path(path)
       return {} unless File.exist?(sp)
 
-      JSON.parse(File.read(sp))
-    rescue JSON::ParserError
-      {}
+      parse_sidecar(File.read(sp))
     end
 
     def set_properties(path, properties)
@@ -121,27 +124,31 @@ module Dave
       sp = sidecar_path(path)
       FileUtils.mkdir_p(File.dirname(sp))
 
-      existing = if File.exist?(sp)
-        JSON.parse(File.read(sp))
-      else
-        {}
+      File.open(sp, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_EX)
+        existing = parse_sidecar(f.read)
+        merged = existing.merge(properties)
+        f.rewind
+        f.write(JSON.generate(merged))
+        f.truncate(f.pos)
       end
-
-      merged = existing.merge(properties)
-      File.write(sp, JSON.generate(merged))
       properties
     end
 
     def delete_properties(path, names)
       abs = absolute(path)
       raise Dave::NotFoundError, "Resource not found: #{path}" unless File.exist?(abs)
-
       sp = sidecar_path(path)
       return unless File.exist?(sp)
 
-      existing = JSON.parse(File.read(sp))
-      names.each { |name| existing.delete(name) }
-      File.write(sp, JSON.generate(existing))
+      File.open(sp, File::RDWR) do |f|
+        f.flock(File::LOCK_EX)
+        existing = parse_sidecar(f.read)
+        names.each { |n| existing.delete(n) }
+        f.rewind
+        f.write(JSON.generate(existing))
+        f.truncate(f.pos)
+      end
       nil
     end
 
@@ -201,7 +208,18 @@ module Dave
     #   /documents/report.pdf  →  /data/.dave-props/documents/report.pdf.json
     #   /documents/            →  /data/.dave-props/documents/.json
     #   /                      →  /data/.dave-props/.json
+    def parse_sidecar(content)
+      return {} if content.nil? || content.strip.empty?
+      JSON.parse(content)
+    rescue JSON::ParserError
+      {}
+    end
+
     def sidecar_path(path)
+      # Validate no traversal segments
+      segments = path.split("/")
+      raise Dave::NotFoundError, "Invalid path: #{path}" if segments.any? { |s| s == ".." }
+
       # Normalise: strip leading slash, preserve trailing slash as a marker
       is_collection = path.end_with?("/")
       stripped = path.sub(%r{\A/}, "").sub(%r{/\z}, "")

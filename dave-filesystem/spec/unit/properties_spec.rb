@@ -27,6 +27,16 @@ RSpec.describe "Dave::FileSystemProvider dead property storage" do
       end
     end
 
+    context "when the sidecar JSON is corrupt" do
+      it "returns empty hash without raising" do
+        File.write(File.join(tmpdir, "file.txt"), "content")
+        sp = File.join(tmpdir, ".dave-props", "file.txt.json")
+        FileUtils.mkdir_p(File.dirname(sp))
+        File.write(sp, "not valid json{{{")
+        expect(provider.get_properties("/file.txt")).to eq({})
+      end
+    end
+
     context "after properties have been set" do
       before do
         File.write(File.join(tmpdir, "file.txt"), "x")
