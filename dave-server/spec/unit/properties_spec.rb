@@ -44,9 +44,7 @@ RSpec.describe Dave::Properties do
         {DAV:}lockdiscovery
         {DAV:}getcontentlanguage
       ]
-      expected.each do |prop|
-        expect(Dave::Properties::LIVE_PROPS).to include(prop)
-      end
+      expect(Dave::Properties::LIVE_PROPS).to include(*expected)
     end
   end
 
@@ -72,6 +70,14 @@ RSpec.describe Dave::Properties do
   end
 
   describe ".live_property" do
+    context "unknown clark name" do
+      it "raises ArgumentError" do
+        expect {
+          Dave::Properties.live_property(file_resource, "{DAV:}unknown")
+        }.to raise_error(ArgumentError, /not a live property/)
+      end
+    end
+
     context "{DAV:}displayname" do
       it "returns the last path segment for a file" do
         expect(Dave::Properties.live_property(file_resource, "{DAV:}displayname")).to eq("report.pdf")

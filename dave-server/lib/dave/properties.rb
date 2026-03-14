@@ -22,7 +22,11 @@ module Dave
 
     # Returns the value of a single live property for the given resource.
     # Returns nil if the property does not apply to this resource.
+    # Raises ArgumentError if clark_name is not a known live property — callers
+    # must check live?(clark_name) before calling this method.
     def self.live_property(resource, clark_name)
+      raise ArgumentError, "#{clark_name.inspect} is not a live property" unless live?(clark_name)
+
       case clark_name
       when "{DAV:}displayname"
         # Last path segment, no trailing slash
@@ -41,6 +45,10 @@ module Dave
       when "{DAV:}creationdate"
         resource.created_at.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
       when "{DAV:}resourcetype"
+        # The collection value is a raw XML fragment string. This is intentional:
+        # Dave::XML handles XML fragment strings and performs DAV: namespace
+        # rebinding when inserting them into a response document. This is the
+        # agreed interface contract between Properties and Dave::XML.
         resource.collection? ? '<D:collection xmlns:D="DAV:"/>' : ""
       when "{DAV:}supportedlock"
         ""
