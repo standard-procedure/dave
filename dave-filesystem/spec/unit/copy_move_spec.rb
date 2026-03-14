@@ -1,8 +1,9 @@
 require "spec_helper"
+require "dave/file_system_provider"
 require "tmpdir"
 require "stringio"
 
-RSpec.describe "Dave::FileSystemProvider copy/move with sidecar props" do
+RSpec.describe Dave::FileSystemProvider, "copy/move with sidecar props" do
   let(:tmpdir) { Dir.mktmpdir }
   subject(:provider) { Dave::FileSystemProvider.new(root: tmpdir) }
 
@@ -184,6 +185,34 @@ RSpec.describe "Dave::FileSystemProvider copy/move with sidecar props" do
 
     it "returns :created when dst did not exist" do
       expect(provider.copy("/src/", "/dst/")).to eq(:created)
+    end
+  end
+
+  # ══════════════════════════════════════════════
+  # #copy — collection overwrite with stale sidecar cleanup
+  # ══════════════════════════════════════════════
+
+  describe "#copy — collection overwrite cleans up stale destination sidecars" do
+    it "removes stale sidecar entries in dst that are not present in src when overwriting" do
+      make_dir("src")
+      write_file("src/a.txt", "aaa")
+      write_sidecar("src/.json", "{DAV:}displayname" => "Src Dir")
+      write_sidecar("src/a.txt.json", "{DAV:}displayname" => "File A")
+
+      # Destination already exists with an extra sidecar entry not in src
+      make_dir("dst")
+      write_file("dst/a.txt", "old content")
+      write_sidecar("dst/.json", "{DAV:}displayname" => "Old Dst Dir")
+      write_sidecar("dst/a.txt.json", "{DAV:}displayname" => "Old File A")
+      write_sidecar("dst/stale.txt.json", "{DAV:}displayname" => "Stale Entry")
+
+      provider.copy("/src/", "/dst/", overwrite: true)
+
+      # Stale entry must not survive the overwrite
+      expect(File.exist?(sidecar("dst/stale.txt.json"))).to be false
+      # Source sidecar content must be copied correctly
+      expect(read_sidecar("dst/.json")).to eq("{DAV:}displayname" => "Src Dir")
+      expect(read_sidecar("dst/a.txt.json")).to eq("{DAV:}displayname" => "File A")
     end
   end
 

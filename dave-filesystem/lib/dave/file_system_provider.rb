@@ -170,6 +170,8 @@ module Dave
       if existed
         if File.directory?(abs_dst)
           FileUtils.rm_rf(abs_dst)
+          dst_sidecar_dir = sidecar_dir(dst)
+          FileUtils.rm_rf(dst_sidecar_dir) if File.exist?(dst_sidecar_dir)
         else
           File.delete(abs_dst)
           dst_sidecar = sidecar_path(dst)
@@ -190,11 +192,8 @@ module Dave
         else
           FileUtils.cp_r(abs_src, abs_dst)
           # Copy the entire sidecar subtree
-          src_rel = src.sub(%r{\A/}, "").chomp("/")
-          dst_rel = dst.sub(%r{\A/}, "").chomp("/")
-          sidecar_root = File.join(@root, ".dave-props")
-          src_sidecar_dir = File.join(sidecar_root, src_rel)
-          dst_sidecar_dir = File.join(sidecar_root, dst_rel)
+          src_sidecar_dir = sidecar_dir(src)
+          dst_sidecar_dir = sidecar_dir(dst)
           if File.exist?(src_sidecar_dir)
             FileUtils.mkdir_p(File.dirname(dst_sidecar_dir))
             FileUtils.cp_r(src_sidecar_dir, dst_sidecar_dir)
@@ -228,8 +227,7 @@ module Dave
       if existed
         if File.directory?(abs_dst)
           FileUtils.rm_rf(abs_dst)
-          dst_rel = dst.sub(%r{\A/}, "").chomp("/")
-          dst_sidecar_dir = File.join(@root, ".dave-props", dst_rel)
+          dst_sidecar_dir = sidecar_dir(dst)
           FileUtils.rm_rf(dst_sidecar_dir) if File.exist?(dst_sidecar_dir)
         else
           File.delete(abs_dst)
@@ -242,11 +240,8 @@ module Dave
 
       if File.directory?(abs_dst)
         # Move the entire sidecar subtree
-        src_rel = src.sub(%r{\A/}, "").chomp("/")
-        dst_rel = dst.sub(%r{\A/}, "").chomp("/")
-        sidecar_root = File.join(@root, ".dave-props")
-        src_sidecar_dir = File.join(sidecar_root, src_rel)
-        dst_sidecar_dir = File.join(sidecar_root, dst_rel)
+        src_sidecar_dir = sidecar_dir(src)
+        dst_sidecar_dir = sidecar_dir(dst)
         if File.exist?(src_sidecar_dir)
           FileUtils.mkdir_p(File.dirname(dst_sidecar_dir))
           FileUtils.mv(src_sidecar_dir, dst_sidecar_dir)
@@ -280,13 +275,6 @@ module Dave
     #   /documents/report.pdf  →  /data/.dave-props/documents/report.pdf.json
     #   /documents/            →  /data/.dave-props/documents/.json
     #   /                      →  /data/.dave-props/.json
-    def parse_sidecar(content)
-      return {} if content.nil? || content.strip.empty?
-      JSON.parse(content)
-    rescue JSON::ParserError
-      {}
-    end
-
     def sidecar_path(path)
       # Validate no traversal segments
       segments = path.split("/")
@@ -306,6 +294,20 @@ module Dave
         # File: path.json
         File.join(@root, ".dave-props", stripped + ".json")
       end
+    end
+
+    # Returns the sidecar subtree directory for a collection path inside .dave-props/.
+    # Used for bulk copy/move/delete of an entire subtree's sidecar props.
+    def sidecar_dir(path)
+      rel = path.sub(%r{\A/}, "").chomp("/")
+      File.join(@root, ".dave-props", rel)
+    end
+
+    def parse_sidecar(content)
+      return {} if content.nil? || content.strip.empty?
+      JSON.parse(content)
+    rescue JSON::ParserError
+      {}
     end
 
     def absolute(path)
