@@ -4,9 +4,10 @@ module Dave
   class Server
     module Handlers
       class DeleteHandler
-        def initialize(filesystem, request)
-          @filesystem = filesystem
-          @request    = request
+        def initialize(filesystem, lock_manager, request)
+          @filesystem   = filesystem
+          @lock_manager = lock_manager
+          @request      = request
         end
 
         def call
