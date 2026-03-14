@@ -26,11 +26,21 @@ RSpec.describe Dave::XML do
       expect(result).to be_an(Array)
       expect(result.length).to eq(2)
     end
+
+    it "raises ArgumentError for a string with no braces" do
+      expect { described_class.clark_to_ns("displayname") }.to raise_error(ArgumentError, /Invalid Clark notation/)
+    end
+
+    it "raises ArgumentError for an empty string" do
+      expect { described_class.clark_to_ns("") }.to raise_error(ArgumentError, /Invalid Clark notation/)
+    end
+
+    it "raises NoMethodError for nil" do
+      expect { described_class.clark_to_ns(nil) }.to raise_error(NoMethodError)
+    end
   end
 
   describe ".propstat" do
-    let(:doc) { Nokogiri::XML::Document.new }
-
     it "returns a node with D:prop containing the property" do
       node = described_class.propstat({ "{DAV:}displayname" => "My File" }, 200)
       xml = node.to_xml
