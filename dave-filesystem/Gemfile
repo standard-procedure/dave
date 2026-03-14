@@ -1,2 +1,4 @@
 source "https://rubygems.org"
 gemspec
+
+gem "dave-server", path: "../dave-server"
