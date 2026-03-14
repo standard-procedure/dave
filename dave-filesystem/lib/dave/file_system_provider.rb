@@ -166,14 +166,48 @@ module Dave
 
       existed = File.exist?(abs_dst)
 
+      # Delete destination first when overwriting (clears stale sidecar too)
+      if existed
+        if File.directory?(abs_dst)
+          FileUtils.rm_rf(abs_dst)
+          dst_sidecar_dir = sidecar_dir(dst)
+          FileUtils.rm_rf(dst_sidecar_dir) if File.exist?(dst_sidecar_dir)
+        else
+          File.delete(abs_dst)
+          dst_sidecar = sidecar_path(dst)
+          File.delete(dst_sidecar) if File.exist?(dst_sidecar)
+        end
+      end
+
       if File.directory?(abs_src)
         if depth == :zero
           FileUtils.mkdir_p(abs_dst)
+          # Copy only the collection's own sidecar props
+          src_sidecar = sidecar_path(src.end_with?("/") ? src : src + "/")
+          if File.exist?(src_sidecar)
+            dst_sidecar = sidecar_path(dst.end_with?("/") ? dst : dst + "/")
+            FileUtils.mkdir_p(File.dirname(dst_sidecar))
+            FileUtils.cp(src_sidecar, dst_sidecar)
+          end
         else
           FileUtils.cp_r(abs_src, abs_dst)
+          # Copy the entire sidecar subtree
+          src_sidecar_dir = sidecar_dir(src)
+          dst_sidecar_dir = sidecar_dir(dst)
+          if File.exist?(src_sidecar_dir)
+            FileUtils.mkdir_p(File.dirname(dst_sidecar_dir))
+            FileUtils.cp_r(src_sidecar_dir, dst_sidecar_dir)
+          end
         end
       else
         FileUtils.cp(abs_src, abs_dst)
+        # Copy sidecar props if they exist
+        src_sidecar = sidecar_path(src)
+        if File.exist?(src_sidecar)
+          dst_sidecar = sidecar_path(dst)
+          FileUtils.mkdir_p(File.dirname(dst_sidecar))
+          FileUtils.cp(src_sidecar, dst_sidecar)
+        end
       end
 
       existed ? :no_content : :created
@@ -188,7 +222,40 @@ module Dave
       raise Dave::AlreadyExistsError if !overwrite && File.exist?(abs_dst)
 
       existed = File.exist?(abs_dst)
+
+      # Delete destination first when overwriting (clears stale sidecar too)
+      if existed
+        if File.directory?(abs_dst)
+          FileUtils.rm_rf(abs_dst)
+          dst_sidecar_dir = sidecar_dir(dst)
+          FileUtils.rm_rf(dst_sidecar_dir) if File.exist?(dst_sidecar_dir)
+        else
+          File.delete(abs_dst)
+          dst_sidecar = sidecar_path(dst)
+          File.delete(dst_sidecar) if File.exist?(dst_sidecar)
+        end
+      end
+
       FileUtils.mv(abs_src, abs_dst)
+
+      if File.directory?(abs_dst)
+        # Move the entire sidecar subtree
+        src_sidecar_dir = sidecar_dir(src)
+        dst_sidecar_dir = sidecar_dir(dst)
+        if File.exist?(src_sidecar_dir)
+          FileUtils.mkdir_p(File.dirname(dst_sidecar_dir))
+          FileUtils.mv(src_sidecar_dir, dst_sidecar_dir)
+        end
+      else
+        # Move sidecar props if they exist
+        src_sidecar = sidecar_path(src)
+        if File.exist?(src_sidecar)
+          dst_sidecar = sidecar_path(dst)
+          FileUtils.mkdir_p(File.dirname(dst_sidecar))
+          FileUtils.mv(src_sidecar, dst_sidecar)
+        end
+      end
+
       existed ? :no_content : :created
     end
 
@@ -208,13 +275,6 @@ module Dave
     #   /documents/report.pdf  →  /data/.dave-props/documents/report.pdf.json
     #   /documents/            →  /data/.dave-props/documents/.json
     #   /                      →  /data/.dave-props/.json
-    def parse_sidecar(content)
-      return {} if content.nil? || content.strip.empty?
-      JSON.parse(content)
-    rescue JSON::ParserError
-      {}
-    end
-
     def sidecar_path(path)
       # Validate no traversal segments
       segments = path.split("/")
@@ -234,6 +294,20 @@ module Dave
         # File: path.json
         File.join(@root, ".dave-props", stripped + ".json")
       end
+    end
+
+    # Returns the sidecar subtree directory for a collection path inside .dave-props/.
+    # Used for bulk copy/move/delete of an entire subtree's sidecar props.
+    def sidecar_dir(path)
+      rel = path.sub(%r{\A/}, "").chomp("/")
+      File.join(@root, ".dave-props", rel)
+    end
+
+    def parse_sidecar(content)
+      return {} if content.nil? || content.strip.empty?
+      JSON.parse(content)
+    rescue JSON::ParserError
+      {}
     end
 
     def absolute(path)
