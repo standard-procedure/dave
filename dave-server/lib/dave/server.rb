@@ -13,6 +13,7 @@ require_relative "server/handlers/put_handler"
 require_relative "server/handlers/mkcol_handler"
 require_relative "server/handlers/delete_handler"
 require_relative "server/handlers/propfind_handler"
+require_relative "server/handlers/proppatch_handler"
 require_relative "xml"
 require_relative "properties"
 
@@ -41,7 +42,8 @@ module Dave
       when "PUT"      then Handlers::PutHandler.new(@filesystem, request).call
       when "MKCOL"    then Handlers::MkcolHandler.new(@filesystem, request).call
       when "DELETE"   then Handlers::DeleteHandler.new(@filesystem, request).call
-      when "PROPFIND" then Handlers::PropfindHandler.new(@filesystem, request).call
+      when "PROPFIND"   then Handlers::PropfindHandler.new(@filesystem, request).call
+      when "PROPPATCH"  then Handlers::ProppatchHandler.new(@filesystem, request).call
       else
         Response.build(501, {}, "Not Implemented")
       end
