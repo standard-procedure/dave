@@ -12,6 +12,7 @@
 4. [Embeddability](#4-embeddability)
 5. [Multi-Agent TDD Workflow](#5-multi-agent-tdd-workflow)
 6. [Development Phases](#6-development-phases)
+7. [Phase 1 Sprint Tasks](#7-phase-1-sprint-tasks)
 
 ---
 
@@ -233,20 +234,265 @@ module Dave
 end
 ```
 
+### Formal Interface Module
+
+The authoritative interface contract, defined as a Ruby module in `dave-server`. Provider implementations include this module and override every method.
+
+**`Dave::Resource` value object** — returned by `get_resource` and `list_children`:
+
+```ruby
+module Dave
+  # Immutable value object representing a WebDAV resource.
+  Resource = Data.define(
+    :path,           # String — URL-decoded path; collection paths end with "/"
+    :collection,     # Boolean — true if this is a collection (directory)
+    :content_type,   # String, nil — MIME type; nil for collections
+    :content_length, # Integer, nil — bytes; nil for collections
+    :etag,           # String — strong ETag (quoted, e.g. '"abc123"')
+    :last_modified,  # Time
+    :created_at      # Time
+  ) do
+    alias_method :collection?, :collection
+  end
+end
+```
+
+**`Dave::FileSystemInterface`** — all methods raise `NotImplementedError` by default:
+
+```ruby
+module Dave
+  module FileSystemInterface
+    # Returns resource metadata. Returns nil if resource does not exist.
+    # @param path [String] URL-decoded path e.g. "/documents/report.pdf"
+    # @return [Dave::Resource, nil]
+    def get_resource(path) = raise NotImplementedError
+
+    # Lists direct children of a collection. Returns nil if path is not a collection.
+    # @param path [String] URL-decoded collection path e.g. "/documents/"
+    # @return [Array<Dave::Resource>, nil]
+    def list_children(path) = raise NotImplementedError
+
+    # Returns resource content as an IO-like object (responds to #read and #each).
+    # @param path [String]
+    # @return [IO]
+    # @raise [Dave::NotFoundError] if resource does not exist
+    def read_content(path) = raise NotImplementedError
+
+    # Creates or overwrites a resource. Returns ETag of written resource.
+    # @param path [String]
+    # @param content [IO] readable stream
+    # @param content_type [String, nil] MIME type hint from client
+    # @return [String] ETag
+    # @raise [Dave::NotFoundError] if parent collection does not exist
+    def write_content(path, content, content_type: nil) = raise NotImplementedError
+
+    # Creates a new collection at path.
+    # @param path [String]
+    # @raise [Dave::AlreadyExistsError] if path is already mapped
+    # @raise [Dave::NotFoundError] if parent collection does not exist
+    def create_collection(path) = raise NotImplementedError
+
+    # Deletes a resource or collection (recursive for collections).
+    # @param path [String]
+    # @return [Array<String>] paths that could NOT be deleted (empty on full success)
+    # @raise [Dave::NotFoundError] if path does not exist
+    def delete(path) = raise NotImplementedError
+
+    # Copies a resource or collection from src to dst.
+    # @param src [String]
+    # @param dst [String]
+    # @param depth [Symbol] :zero or :infinity
+    # @param overwrite [Boolean]
+    # @return [Symbol] :created or :no_content
+    # @raise [Dave::NotFoundError] if src does not exist or dst parent missing
+    # @raise [Dave::AlreadyExistsError] if overwrite is false and dst exists
+    def copy(src, dst, depth: :infinity, overwrite: true) = raise NotImplementedError
+
+    # Moves a resource or collection from src to dst.
+    # @param src [String]
+    # @param dst [String]
+    # @param overwrite [Boolean]
+    # @return [Symbol] :created or :no_content
+    # @raise [Dave::NotFoundError] if src does not exist or dst parent missing
+    # @raise [Dave::AlreadyExistsError] if overwrite is false and dst exists
+    def move(src, dst, overwrite: true) = raise NotImplementedError
+
+    # Returns all dead properties for a resource.
+    # @param path [String]
+    # @return [Hash<String, String>] Clark-notation name ("{ns}local") => XML value string
+    def get_properties(path) = raise NotImplementedError
+
+    # Sets (merges) dead properties on a resource.
+    # @param path [String]
+    # @param properties [Hash<String, String>] Clark-notation name => XML value string
+    # @raise [Dave::NotFoundError]
+    def set_properties(path, properties) = raise NotImplementedError
+
+    # Removes dead properties from a resource. Missing names are silently ignored.
+    # @param path [String]
+    # @param names [Array<String>] Clark-notation property names
+    # @raise [Dave::NotFoundError]
+    def delete_properties(path, names) = raise NotImplementedError
+
+    # Creates a write lock on path. Returns the lock token.
+    # Only called if supports_locking? returns true.
+    # @param path [String]
+    # @param scope [Symbol] :exclusive or :shared
+    # @param depth [Symbol] :zero or :infinity
+    # @param owner [String, nil] XML owner fragment (stored verbatim)
+    # @param timeout [Integer, Symbol] seconds or :infinite
+    # @return [String] lock token (UUID URN, e.g. "urn:uuid:...")
+    # @raise [Dave::LockedError] if a conflicting lock exists
+    def lock(path, scope:, depth:, owner: nil, timeout: 3600) = raise NotImplementedError
+
+    # Removes the lock identified by token from path's scope.
+    # @param path [String]
+    # @param token [String] lock token URN
+    # @raise [Dave::NotFoundError] if token not found or path not in lock scope
+    def unlock(path, token) = raise NotImplementedError
+
+    # Returns all active locks applying to path (direct and inherited depth-infinity locks).
+    # @param path [String]
+    # @return [Array<Dave::LockInfo>]
+    def get_lock(path) = raise NotImplementedError
+
+    # Returns true if this provider supports write locking.
+    # @return [Boolean]
+    def supports_locking? = raise NotImplementedError
+
+    # Returns bytes available for new content at path, or nil if unknown.
+    # @param path [String]
+    # @return [Integer, nil]
+    def quota_available_bytes(path) = raise NotImplementedError
+
+    # Returns bytes currently used by stored content at path, or nil if unknown.
+    # @param path [String]
+    # @return [Integer, nil]
+    def quota_used_bytes(path) = raise NotImplementedError
+  end
+end
+```
+
 ### Compliance Test Suite
 
 Implementers include `Dave::FileSystemProvider::ComplianceTests` in their RSpec suite:
 
+The compliance suite is defined in `dave-server` as a shared module. It uses `self.included` to inject RSpec examples into the including spec:
+
 ```ruby
-# In the implementer's spec file:
+# Defined in dave-server/lib/dave/file_system_interface/compliance_tests.rb
+module Dave
+  module FileSystemInterface
+    module ComplianceTests
+      def self.included(base)
+        base.describe "FileSystem Provider compliance" do
+          # subject must be set to a configured provider instance in the including spec
+
+          it "returns nil for non-existent paths" do
+            expect(subject.get_resource("/nonexistent")).to be_nil
+          end
+
+          it "lists children of the root collection" do
+            expect(subject.list_children("/")).to be_an(Array)
+          end
+
+          it "creates a resource and reads it back" do
+            subject.write_content("/test.txt", StringIO.new("hello"), content_type: "text/plain")
+            resource = subject.get_resource("/test.txt")
+            expect(resource).not_to be_nil
+            expect(resource.collection?).to be false
+            expect(resource.content_length).to eq(5)
+            expect(subject.read_content("/test.txt").read).to eq("hello")
+          end
+
+          it "creates a collection" do
+            subject.create_collection("/mydir/")
+            resource = subject.get_resource("/mydir/")
+            expect(resource).not_to be_nil
+            expect(resource.collection?).to be true
+          end
+
+          it "lists collection children after writes" do
+            subject.write_content("/a.txt", StringIO.new("a"))
+            subject.write_content("/b.txt", StringIO.new("b"))
+            paths = subject.list_children("/").map(&:path)
+            expect(paths).to include("/a.txt", "/b.txt")
+          end
+
+          it "deletes a resource" do
+            subject.write_content("/deleteme.txt", StringIO.new("bye"))
+            subject.delete("/deleteme.txt")
+            expect(subject.get_resource("/deleteme.txt")).to be_nil
+          end
+
+          it "deletes a collection recursively" do
+            subject.create_collection("/dir/")
+            subject.write_content("/dir/file.txt", StringIO.new("x"))
+            subject.delete("/dir/")
+            expect(subject.get_resource("/dir/")).to be_nil
+            expect(subject.get_resource("/dir/file.txt")).to be_nil
+          end
+
+          it "copies a resource" do
+            subject.write_content("/src.txt", StringIO.new("copy me"))
+            subject.copy("/src.txt", "/dst.txt")
+            expect(subject.read_content("/dst.txt").read).to eq("copy me")
+            expect(subject.get_resource("/src.txt")).not_to be_nil
+          end
+
+          it "moves a resource" do
+            subject.write_content("/old.txt", StringIO.new("move me"))
+            subject.move("/old.txt", "/new.txt")
+            expect(subject.get_resource("/old.txt")).to be_nil
+            expect(subject.read_content("/new.txt").read).to eq("move me")
+          end
+
+          it "stores and retrieves dead properties" do
+            subject.write_content("/props.txt", StringIO.new("x"))
+            subject.set_properties("/props.txt", "{http://example.com/}author" => "<author>Alice</author>")
+            props = subject.get_properties("/props.txt")
+            expect(props["{http://example.com/}author"]).to eq("<author>Alice</author>")
+          end
+
+          it "removes dead properties" do
+            subject.write_content("/props.txt", StringIO.new("x"))
+            subject.set_properties("/props.txt", "{http://example.com/}foo" => "<foo/>")
+            subject.delete_properties("/props.txt", ["{http://example.com/}foo"])
+            expect(subject.get_properties("/props.txt")).not_to have_key("{http://example.com/}foo")
+          end
+
+          it "changes ETag on write" do
+            subject.write_content("/etag.txt", StringIO.new("v1"))
+            etag1 = subject.get_resource("/etag.txt").etag
+            subject.write_content("/etag.txt", StringIO.new("v2"))
+            etag2 = subject.get_resource("/etag.txt").etag
+            expect(etag1).not_to eq(etag2)
+          end
+
+          it "raises NotFoundError when reading missing resource" do
+            expect { subject.read_content("/missing") }.to raise_error(Dave::NotFoundError)
+          end
+
+          it "raises NotFoundError when writing to missing parent" do
+            expect { subject.write_content("/missing-parent/file.txt", StringIO.new("x")) }
+              .to raise_error(Dave::NotFoundError)
+          end
+
+          it "raises AlreadyExistsError when creating existing collection" do
+            subject.create_collection("/existing/")
+            expect { subject.create_collection("/existing/") }
+              .to raise_error(Dave::AlreadyExistsError)
+          end
+        end
+      end
+    end
+  end
+end
+
+# Implementers use it like:
 RSpec.describe MyCustomProvider do
-  include Dave::FileSystemProvider::ComplianceTests
-
-  # Must define a `provider` let that returns an instance of the provider
-  # configured with an empty, writable storage root
-  let(:provider) { MyCustomProvider.new(root: Dir.mktmpdir) }
-
-  # The compliance suite runs all tests automatically
+  subject { MyCustomProvider.new(root: Dir.mktmpdir) }
+  include Dave::FileSystemInterface::ComplianceTests
 end
 ```
 
@@ -299,6 +545,39 @@ module Dave
       @display_name = display_name || name
     end
   end
+end
+```
+
+### Formal Interface Module
+
+The authoritative interface contract, defined in `dave-server`:
+
+```ruby
+module Dave
+  module SecurityInterface
+    # Authenticates a request. Returns an authenticated Principal or nil.
+    # @param request [Rack::Request]
+    # @return [Dave::Principal, nil]
+    def authenticate(request) = raise NotImplementedError
+
+    # Returns the WWW-Authenticate challenge string.
+    # Called to build the 401 response header when auth is required.
+    # @return [String] e.g. 'Basic realm="WebDAV"'
+    def challenge = raise NotImplementedError
+
+    # Returns true if principal may perform operation on path.
+    # principal may be nil (anonymous access).
+    # @param principal [Dave::Principal, nil]
+    # @param path [String]
+    # @param operation [Symbol] :read or :write
+    # @return [Boolean]
+    def authorize(principal, path, operation) = raise NotImplementedError
+  end
+
+  # Immutable value object representing an authenticated user.
+  # id       — unique identifier (e.g. username)
+  # display_name — human-readable name for DAV:owner display
+  Principal = Data.define(:id, :display_name)
 end
 ```
 
@@ -357,18 +636,82 @@ anonymous:
 
 ### Compliance Test Suite
 
-```ruby
-RSpec.describe MySecurityProvider do
-  include Dave::SecurityProvider::ComplianceTests
+The compliance suite is defined in `dave-server` using the same `self.included` pattern as the filesystem suite:
 
-  # Must define these lets:
-  let(:provider) { MySecurityProvider.new(config) }
-  let(:read_only_user) { "reader" }          # username with read-only access to /
-  let(:read_write_user) { "writer" }         # username with read-write access to /
-  let(:restricted_user) { "restricted" }     # username with NO access to /secret/
-  let(:read_only_password) { "pass1" }
-  let(:read_write_password) { "pass2" }
-  let(:restricted_password) { "pass3" }
+```ruby
+# Defined in dave-server/lib/dave/security_interface/compliance_tests.rb
+module Dave
+  module SecurityInterface
+    module ComplianceTests
+      def self.included(base)
+        base.describe "Security Provider compliance" do
+          # Including spec must define these lets:
+          #   subject          — provider instance
+          #   read_request     — Rack::Request with valid read-only credentials
+          #   write_request    — Rack::Request with valid read-write credentials
+          #   invalid_request  — Rack::Request with wrong credentials
+          #   anon_request     — Rack::Request with no credentials
+          #   read_only_path   — path the read-only user can read but not write
+          #   read_write_path  — path the read-write user can read and write
+          #   restricted_path  — path neither user can access
+
+          it "returns a Principal for valid credentials" do
+            principal = subject.authenticate(read_request)
+            expect(principal).to be_a(Dave::Principal)
+            expect(principal.id).not_to be_nil
+          end
+
+          it "returns nil for invalid credentials" do
+            expect(subject.authenticate(invalid_request)).to be_nil
+          end
+
+          it "returns a non-empty WWW-Authenticate challenge" do
+            expect(subject.challenge).to be_a(String)
+            expect(subject.challenge).not_to be_empty
+          end
+
+          it "allows read-only user to read" do
+            principal = subject.authenticate(read_request)
+            expect(subject.authorize(principal, read_only_path, :read)).to be true
+          end
+
+          it "denies read-only user from writing" do
+            principal = subject.authenticate(read_request)
+            expect(subject.authorize(principal, read_only_path, :write)).to be false
+          end
+
+          it "allows read-write user to read and write" do
+            principal = subject.authenticate(write_request)
+            expect(subject.authorize(principal, read_write_path, :read)).to be true
+            expect(subject.authorize(principal, read_write_path, :write)).to be true
+          end
+
+          it "denies access to restricted paths" do
+            principal = subject.authenticate(read_request)
+            expect(subject.authorize(principal, restricted_path, :read)).to be false
+          end
+
+          it "denies anonymous access when not configured" do
+            expect(subject.authorize(nil, read_only_path, :read)).to be false
+          end
+        end
+      end
+    end
+  end
+end
+
+# Implementers use it like:
+RSpec.describe MySecurityProvider do
+  subject { MySecurityProvider.new(config) }
+  include Dave::SecurityInterface::ComplianceTests
+
+  let(:read_request)    { build_request(username: "reader",  password: "pass1") }
+  let(:write_request)   { build_request(username: "writer",  password: "pass2") }
+  let(:invalid_request) { build_request(username: "reader",  password: "wrong") }
+  let(:anon_request)    { build_request }
+  let(:read_only_path)  { "/" }
+  let(:read_write_path) { "/writer-home/" }
+  let(:restricted_path) { "/secret/" }
 end
 ```
 
@@ -380,6 +723,7 @@ end
 4. **Write authorisation** — read-write user can read and write
 5. **Path-based access** — access rules are path-scoped
 6. **Restricted paths** — user without access to a path is denied
+7. **Anonymous access** — nil principal handled correctly
 
 ---
 
@@ -848,6 +1192,93 @@ For each WebDAV method, the test suite includes:
 | 6 | Compliance | Full 3 | Litmus passing, real-client tested |
 
 **Total estimated effort:** 32-42 stories across 6 phases, ~16-22 developer agent runs.
+
+---
+
+---
+
+## 7. Phase 1 Sprint Tasks
+
+Concrete task list for Phase 1 (Core Read/Write: OPTIONS, GET, HEAD, PUT, DELETE, MKCOL). Tasks are ordered; each item is small enough to commit independently. Developer agents follow strict TDD: write a failing spec, then implementation, then commit.
+
+### Setup
+
+- [ ] Confirm `bundle install` succeeds in `dave-server/`, `dave-filesystem/`, `dave-security/`
+- [ ] Confirm `bundle exec rspec` runs zero examples with zero failures in each gem
+- [ ] Add `rack-test` to `dave-server.gemspec` development dependencies
+
+### Dave::Resource and Dave::FileSystemInterface (dave-server)
+
+- [ ] Define `Dave::Resource` as `Data.define(...)` value object with all fields; write unit spec
+- [ ] Define `Dave::FileSystemInterface` module with all 17 method stubs (raise NotImplementedError)
+- [ ] Define `Dave::FileSystemInterface::ComplianceTests` module with `self.included` pattern
+- [ ] Write unit spec verifying that including `ComplianceTests` into an RSpec suite injects examples
+
+### Dave::FileSystemProvider (dave-filesystem)
+
+- [ ] Implement `get_resource(path)` — `File.stat` + `Dave::Resource`; return nil if missing
+- [ ] Implement `list_children(path)` — `Dir.entries` filtered; return nil if not a collection
+- [ ] Implement `read_content(path)` — `File.open(..., "rb")`; raise `NotFoundError` if missing
+- [ ] Implement `write_content(path, io, content_type:)` — stream IO to disk; return ETag (MD5 hex of content)
+- [ ] Implement `create_collection(path)` — `Dir.mkdir`; raise `AlreadyExistsError` / `NotFoundError`
+- [ ] Implement `delete(path)` — `FileUtils.rm_rf`; return list of failed paths
+- [ ] Implement `supports_locking?` → `false` (Phase 4 adds locking)
+- [ ] Implement `quota_available_bytes` / `quota_used_bytes` → `nil`
+- [ ] Include `Dave::FileSystemInterface::ComplianceTests` in provider spec; all examples pass
+
+### Dave::Server — OPTIONS
+
+- [ ] `OPTIONS *` returns 200 with `DAV: 1` header (Phase 4 upgrades to `DAV: 1, 2`)
+- [ ] `OPTIONS *` returns `Allow:` header listing GET, HEAD, PUT, DELETE, MKCOL, OPTIONS, PROPFIND, PROPPATCH, COPY, MOVE, LOCK, UNLOCK
+- [ ] `OPTIONS /path` returns same headers
+
+### Dave::Server — GET / HEAD
+
+- [ ] `GET /file` returns 200 with correct body, `Content-Type`, `Content-Length`, `ETag`, `Last-Modified`
+- [ ] `HEAD /file` returns same headers as GET with no body
+- [ ] `GET /nonexistent` returns 404
+- [ ] `GET /collection/` returns 200 (body may be empty)
+- [ ] `GET /file` with `If-None-Match: <etag>` returns 304 Not Modified when ETag matches
+
+### Dave::Server — PUT
+
+- [ ] `PUT /newfile` with body creates resource, returns 201 with `ETag` header
+- [ ] `PUT /existing` with body replaces content, returns 204
+- [ ] `PUT /missing-parent/file` returns 409 Conflict
+- [ ] `PUT /collection/` returns 405 Method Not Allowed
+
+### Dave::Server — MKCOL
+
+- [ ] `MKCOL /newdir` creates collection, returns 201
+- [ ] `MKCOL /existing` returns 405 Method Not Allowed
+- [ ] `MKCOL /missing-parent/newdir` returns 409 Conflict
+- [ ] `MKCOL /path` with non-empty request body returns 415 Unsupported Media Type
+
+### Dave::Server — DELETE
+
+- [ ] `DELETE /file` deletes resource, returns 204
+- [ ] `DELETE /collection/` deletes collection and all members recursively, returns 204
+- [ ] `DELETE /nonexistent` returns 404
+- [ ] `DELETE /collection/` where some members fail to delete returns 207 Multi-Status with per-member errors
+
+### Infrastructure
+
+- [ ] Path normalisation: percent-decode `%XX` sequences in request URI before routing
+- [ ] Trailing slash handling: treat `/dir` and `/dir/` consistently for collections
+- [ ] Error mapping: `Dave::NotFoundError` → 404; `Dave::AlreadyExistsError` → 405 or 409 by context
+- [ ] Standard response headers: `Content-Type: application/xml` for WebDAV responses; `Date:` header on all responses
+
+### Exit Criteria
+
+All of the following work via `curl` against a running Dave server:
+
+```bash
+curl -X OPTIONS http://localhost:9292/dav/        # → 200, DAV: 1
+curl -X MKCOL   http://localhost:9292/dav/test/   # → 201
+curl -T file.txt http://localhost:9292/dav/test/file.txt  # → 201
+curl http://localhost:9292/dav/test/file.txt      # → 200 + file content
+curl -X DELETE  http://localhost:9292/dav/test/   # → 204
+```
 
 ---
 

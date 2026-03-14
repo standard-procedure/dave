@@ -8,6 +8,7 @@
 ## Table of Contents
 
 1. [Overview](#1-overview)
+- [Compliance Matrix](#compliance-matrix)
 2. [Core Concepts](#2-core-concepts)
 3. [Property Model](#3-property-model)
 4. [Collection Model](#4-collection-model)
@@ -35,6 +36,52 @@ WebDAV (Web Distributed Authoring and Versioning) extends HTTP/1.1 with:
 **XML namespace:** `DAV:` (used for all WebDAV-defined elements and properties)
 
 **Content-Type for XML bodies:** `application/xml` (MUST accept both `text/xml` and `application/xml`)
+
+---
+
+## Compliance Matrix
+
+Quick reference for which features are required at each compliance class. Use this during implementation to know what to build and test first.
+
+| Method / Feature | Class 1 | Class 2 | Notes |
+|---|---|---|---|
+| `OPTIONS` — `DAV:` header | MUST | MUST | Return `DAV: 1` (Class 1), `DAV: 1, 2` (Class 2), `DAV: 1, 2, 3` (Class 3) |
+| `OPTIONS` — `Allow:` header | MUST | MUST | List all supported methods |
+| `GET` / `HEAD` | MUST | MUST | Standard HTTP semantics; collections MAY return HTML listing |
+| `PUT` | MUST | MUST | Creates (201) or replaces (204) resource; 409 if parent missing |
+| `DELETE` | MUST | MUST | Non-collection: 204; Collection: implicit Depth infinity; 207 on partial failure |
+| `MKCOL` | MUST | MUST | 201 on success; 405 if URL mapped; 409 if parent missing; 415 if body present |
+| `COPY` | MUST | MUST | `Destination:` required; `Overwrite: T\|F` (default T); Depth 0 or infinity |
+| `MOVE` | MUST | MUST | `Destination:` required; `Overwrite: T\|F`; always Depth infinity for collections |
+| `PROPFIND` | MUST | MUST | `<prop>`, `<allprop>`, `<propname>`, empty body (=allprop); Depth 0, 1, infinity; 207 response |
+| `PROPPATCH` | MUST | MUST | `<set>` and `<remove>`; MUST be atomic (all or nothing); 207 response |
+| `LOCK` | — | MUST | Exclusive and shared write locks; Depth 0 and infinity; lock on unmapped URL creates empty resource |
+| `UNLOCK` | — | MUST | `Lock-Token:` header required; removes lock from entire scope |
+| Live property: `DAV:resourcetype` | MUST | MUST | `<collection/>` for collections; empty for non-collections |
+| Live property: `DAV:getetag` | MUST* | MUST* | MUST be defined if resource returns `ETag` header; strong ETags preferred |
+| Live property: `DAV:getlastmodified` | MUST* | MUST* | MUST be defined if resource returns `Last-Modified` |
+| Live property: `DAV:getcontentlength` | MUST* | MUST* | MUST be defined if resource returns `Content-Length` |
+| Live property: `DAV:getcontenttype` | MUST* | MUST* | MUST be defined if resource returns `Content-Type` |
+| Live property: `DAV:creationdate` | SHOULD | SHOULD | ISO 8601 / RFC 3339 format |
+| Live property: `DAV:displayname` | SHOULD | SHOULD | Human-readable name; SHOULD NOT be protected |
+| Live property: `DAV:lockdiscovery` | — | MUST | Zero or more `<activelock>` elements; protected |
+| Live property: `DAV:supportedlock` | — | MUST | Lists supported lock scope/type combinations; protected |
+| Dead properties (arbitrary XML) | SHOULD | SHOULD | Stored verbatim; XML Information Items preserved per §4.4 |
+| `207 Multi-Status` responses | MUST | MUST | For PROPFIND, PROPPATCH, and partial failures in DELETE/COPY/MOVE |
+| `If:` conditional header | MUST | MUST | Lock token submission AND conditional semantics; tagged and no-tag lists |
+| `Overwrite:` header | MUST | MUST | `T` (default) or `F`; used with COPY and MOVE |
+| `Depth:` header | MUST | MUST | `0`, `1`, `infinity`; required by PROPFIND, used by COPY, LOCK |
+| `Lock-Token:` response header | — | MUST | Returned on successful LOCK create |
+| `Timeout:` request header | — | SHOULD | Client-suggested lock duration; server chooses actual value |
+| XML well-formedness validation | MUST | MUST | 400 on malformed XML |
+| XML external entity rejection | MUST | MUST | Reject XXE; 403 with `no-external-entities` precondition code |
+| Precondition/postcondition `<error>` | SHOULD | SHOULD | Structured error bodies using defined condition elements |
+| Namespace consistency | MUST | MUST | Parent collection MUST exist before child; DELETE skips ancestors on partial failure |
+| `Depth: infinity` PROPFIND | SHOULD | SHOULD | MAY reject with 403 + `propfind-finite-depth` |
+
+> `MUST*` — required only if the server returns the corresponding HTTP response header. In practice this means all non-collection resources MUST have these properties.
+
+> **Class 3** adds no new methods; it simply declares RFC 4918 compliance (vs older RFC 2518). Advertise `DAV: 1, 3` or `DAV: 1, 2, 3`.
 
 ---
 
