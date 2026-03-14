@@ -12,6 +12,7 @@ require_relative "server/handlers/get_handler"
 require_relative "server/handlers/put_handler"
 require_relative "server/handlers/mkcol_handler"
 require_relative "server/handlers/delete_handler"
+require_relative "xml"
 
 module Dave
   class Server
