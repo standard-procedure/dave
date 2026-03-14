@@ -3,6 +3,7 @@ require "dave/errors"
 require "dave/file_system_interface"
 require "digest"
 require "fileutils"
+require "json"
 
 module Dave
   class FileSystemProvider
@@ -10,7 +11,6 @@ module Dave
 
     def initialize(root:)
       @root = File.expand_path(root)
-      @properties = {}
     end
 
     # ──────────────────────────────────────────────
@@ -102,21 +102,47 @@ module Dave
     end
 
     # ──────────────────────────────────────────────
-    # Phase 2+ stubs: properties
+    # Phase 2: properties (persistent sidecar JSON files)
     # ──────────────────────────────────────────────
 
     def get_properties(path)
-      @properties[path] || {}
+      sp = sidecar_path(path)
+      return {} unless File.exist?(sp)
+
+      JSON.parse(File.read(sp))
+    rescue JSON::ParserError
+      {}
     end
 
     def set_properties(path, properties)
-      @properties[path] ||= {}
-      @properties[path].merge!(properties)
+      abs = absolute(path)
+      raise Dave::NotFoundError, "Resource not found: #{path}" unless File.exist?(abs)
+
+      sp = sidecar_path(path)
+      FileUtils.mkdir_p(File.dirname(sp))
+
+      existing = if File.exist?(sp)
+        JSON.parse(File.read(sp))
+      else
+        {}
+      end
+
+      merged = existing.merge(properties)
+      File.write(sp, JSON.generate(merged))
+      properties
     end
 
     def delete_properties(path, names)
-      return unless @properties[path]
-      names.each { |name| @properties[path].delete(name) }
+      abs = absolute(path)
+      raise Dave::NotFoundError, "Resource not found: #{path}" unless File.exist?(abs)
+
+      sp = sidecar_path(path)
+      return unless File.exist?(sp)
+
+      existing = JSON.parse(File.read(sp))
+      names.each { |name| existing.delete(name) }
+      File.write(sp, JSON.generate(existing))
+      nil
     end
 
     # ──────────────────────────────────────────────
@@ -168,6 +194,29 @@ module Dave
     def get_lock(path) = raise NotImplementedError
 
     private
+
+    # Converts a resource path to its sidecar JSON file path inside .dave-props/.
+    #
+    # Examples (given @root = "/data"):
+    #   /documents/report.pdf  →  /data/.dave-props/documents/report.pdf.json
+    #   /documents/            →  /data/.dave-props/documents/.json
+    #   /                      →  /data/.dave-props/.json
+    def sidecar_path(path)
+      # Normalise: strip leading slash, preserve trailing slash as a marker
+      is_collection = path.end_with?("/")
+      stripped = path.sub(%r{\A/}, "").sub(%r{/\z}, "")
+
+      if stripped.empty?
+        # Root collection: /.json inside .dave-props
+        File.join(@root, ".dave-props", ".json")
+      elsif is_collection
+        # Collection: dir/.json
+        File.join(@root, ".dave-props", stripped, ".json")
+      else
+        # File: path.json
+        File.join(@root, ".dave-props", stripped + ".json")
+      end
+    end
 
     def absolute(path)
       expanded = File.expand_path(File.join(@root, path))
