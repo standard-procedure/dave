@@ -33,8 +33,7 @@ module Dave
       PROPFIND PROPPATCH COPY MOVE LOCK UNLOCK
     ].freeze
 
-    READ_METHODS  = %w[GET HEAD OPTIONS PROPFIND].freeze
-    WRITE_METHODS = %w[PUT DELETE MKCOL PROPPATCH COPY MOVE LOCK UNLOCK].freeze
+    READ_METHODS = %w[GET HEAD OPTIONS PROPFIND].freeze
 
     def initialize(filesystem:, prefix: "", security: nil)
       @filesystem   = filesystem

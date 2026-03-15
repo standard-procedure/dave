@@ -146,6 +146,30 @@ RSpec.describe "Security (HTTP Basic Auth)" do
         custom_request("MKCOL", "/allowed_newdir", {}, rack_env)
       end
 
+      it "maps PROPPATCH to :write operation" do
+        expect(security_provider).to receive(:authorize).with(valid_principal, "/allowed.txt", :write).and_return(true)
+        body = <<~XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <D:propertyupdate xmlns:D="DAV:">
+            <D:set><D:prop><D:displayname>test</D:displayname></D:prop></D:set>
+          </D:propertyupdate>
+        XML
+        rack_env = { "rack.input" => StringIO.new(body), "CONTENT_TYPE" => "application/xml" }.merge(basic_auth_header("alice", "secret"))
+        custom_request("PROPPATCH", "/allowed.txt", {}, rack_env)
+      end
+
+      it "maps COPY to :write operation" do
+        expect(security_provider).to receive(:authorize).with(valid_principal, "/allowed.txt", :write).and_return(true)
+        rack_env = { "rack.input" => StringIO.new("") }.merge(basic_auth_header("alice", "secret")).merge("HTTP_DESTINATION" => "http://example.org/allowed_copy.txt")
+        custom_request("COPY", "/allowed.txt", {}, rack_env)
+      end
+
+      it "maps MOVE to :write operation" do
+        expect(security_provider).to receive(:authorize).with(valid_principal, "/allowed.txt", :write).and_return(true)
+        rack_env = { "rack.input" => StringIO.new("") }.merge(basic_auth_header("alice", "secret")).merge("HTTP_DESTINATION" => "http://example.org/allowed_moved.txt")
+        custom_request("MOVE", "/allowed.txt", {}, rack_env)
+      end
+
       it "maps LOCK to :write operation" do
         expect(security_provider).to receive(:authorize).with(valid_principal, "/allowed.txt", :write).and_return(true)
         body = <<~XML
