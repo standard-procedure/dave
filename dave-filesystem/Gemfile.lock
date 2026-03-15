@@ -7,6 +7,14 @@ PATH
       rack (>= 2.0)
 
 PATH
+  remote: ../samba-dave
+  specs:
+    samba-dave (0.1.0)
+      bindata (~> 2.5)
+      dave-server
+      rubyntlm (~> 0.6)
+
+PATH
   remote: .
   specs:
     dave-filesystem (0.1.0)
@@ -15,6 +23,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     base64 (0.3.0)
+    bindata (2.5.1)
     diff-lcs (1.6.2)
     docile (1.4.1)
     nokogiri (1.19.1-x86_64-linux-gnu)
@@ -34,6 +43,8 @@ GEM
       diff-lcs (>= 1.2.0, < 2.0)
       rspec-support (~> 3.13.0)
     rspec-support (3.13.7)
+    rubyntlm (0.6.5)
+      base64
     simplecov (0.22.0)
       docile (~> 1.1)
       simplecov-html (~> 0.11)
@@ -48,10 +59,12 @@ DEPENDENCIES
   dave-filesystem!
   dave-server!
   rspec (~> 3.0)
+  samba-dave!
   simplecov
 
 CHECKSUMS
-  base64 (0.3.0)
+  base64 (0.3.0) sha256=27337aeabad6ffae05c265c450490628ef3ebd4b67be58257393227588f5a97b
+  bindata (2.5.1) sha256=53186a1ec2da943d4cb413583d680644eb810aacbf8902497aac8f191fad9e58
   dave-filesystem (0.1.0)
   dave-server (0.1.0)
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
@@ -64,6 +77,8 @@ CHECKSUMS
   rspec-expectations (3.13.5) sha256=33a4d3a1d95060aea4c94e9f237030a8f9eae5615e9bd85718fe3a09e4b58836
   rspec-mocks (3.13.8) sha256=086ad3d3d17533f4237643de0b5c42f04b66348c28bf6b9c2d3f4a3b01af1d47
   rspec-support (3.13.7) sha256=0640e5570872aafefd79867901deeeeb40b0c9875a36b983d85f54fb7381c47c
+  rubyntlm (0.6.5) sha256=47013402b99ae29ee93f930af51edaec8c6008556f4be25705a422b4430314f5
+  samba-dave (0.1.0)
   simplecov (0.22.0) sha256=fe2622c7834ff23b98066bb0a854284b2729a569ac659f82621fc22ef36213a5
   simplecov-html (0.13.2) sha256=bd0b8e54e7c2d7685927e8d6286466359b6f16b18cb0df47b508e8d73c777246
   simplecov_json_formatter (0.1.4) sha256=529418fbe8de1713ac2b2d612aa3daa56d316975d307244399fa4838c601b428

@@ -25,6 +25,7 @@ require "samba_dave/protocol/constants"
 require "samba_dave/protocol/header"
 require "samba_dave/protocol/transport"
 require "samba_dave/protocol/commands/negotiate"
+require "samba_dave/structured_logger"
 
 RSpec.describe "SMB2 NEGOTIATE integration", :integration do
   let(:port) { 4450 }
@@ -34,7 +35,8 @@ RSpec.describe "SMB2 NEGOTIATE integration", :integration do
     @server = SambaDave::Server.new(
       filesystem: filesystem,
       share_name: "test",
-      port: port
+      port: port,
+      logger: SambaDave::StructuredLogger.new(File::NULL)  # suppress logging in tests
     )
     @server_thread = Thread.new { @server.start }
     sleep 0.1  # wait for server to bind
@@ -80,7 +82,8 @@ RSpec.describe "SMB2 NEGOTIATE integration", :integration do
     # Parse NEGOTIATE response body
     body = SambaDave::Protocol::Commands::NegotiateResponse.read(raw[64..])
     expect(body.structure_size).to eq(65)
-    expect(body.dialect_revision).to eq(SambaDave::Protocol::Constants::Dialects::SMB2_0_2)
+    # Default dialect list includes 0x0210 so server should select SMB 2.1
+    expect(body.dialect_revision).to eq(SambaDave::Protocol::Constants::Dialects::SMB2_1)
     expect(body.security_mode & SambaDave::Protocol::Constants::SecurityMode::SIGNING_ENABLED).to eq(1)
     expect(body.server_guid).to eq(@server.server_guid)
     expect(body.max_transact_size).to eq(8_388_608)

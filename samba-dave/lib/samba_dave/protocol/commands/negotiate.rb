@@ -186,16 +186,22 @@ module SambaDave
         # @param server_guid [String] 16-byte server GUID
         # @return [String] serialised NegotiateResponse body (binary)
         def self.handle(request, server_guid:)
-          # Select the dialect: prefer SMB 2.0.2; accept any known dialect
+          # Select the highest supported dialect offered by the client.
+          # Preference: SMB 2.1 > SMB 2.0.2 (Phase 6+)
           dialects = request.dialects.to_a
-          selected = if dialects.include?(Constants::Dialects::SMB2_0_2)
+          selected = if dialects.include?(Constants::Dialects::SMB2_1)
+            Constants::Dialects::SMB2_1
+          elsif dialects.include?(Constants::Dialects::SMB2_0_2)
             Constants::Dialects::SMB2_0_2
           else
-            # Fall back to SMB 2.0.2 if offered dialect we don't understand
+            # Fall back to SMB 2.0.2 if no supported dialect offered
             Constants::Dialects::SMB2_0_2
           end
 
           spnego_token = SPNEGO.neg_token_init
+
+          # Return the selected dialect so callers can grant 32 initial credits
+          # (the credit grant is applied in the header, not here)
 
           response = NegotiateResponse.new(
             security_mode:          Constants::SecurityMode::SIGNING_ENABLED,

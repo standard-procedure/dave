@@ -3,6 +3,7 @@
 require "spec_helper"
 require "socket"
 require "samba_dave/server"
+require "samba_dave/structured_logger"
 require "samba_dave/protocol/constants"
 require "samba_dave/protocol/header"
 require "samba_dave/protocol/transport"
@@ -21,7 +22,7 @@ RSpec.describe SambaDave::Server do
 
   describe "#initialize" do
     it "creates a server with required parameters" do
-      server = described_class.new(filesystem: filesystem)
+      server = described_class.new(filesystem: filesystem, logger: SambaDave::StructuredLogger.new(File::NULL))
 
       expect(server.share_name).to eq("share")
       expect(server.port).to eq(445)
@@ -49,9 +50,11 @@ RSpec.describe SambaDave::Server do
   end
 
   describe "#start and #stop" do
+    let(:null_logger) { SambaDave::StructuredLogger.new(File::NULL) }
+
     it "starts, accepts a connection, handles a NEGOTIATE, and stops cleanly" do
       port = free_port
-      server = described_class.new(filesystem: filesystem, port: port)
+      server = described_class.new(filesystem: filesystem, port: port, logger: null_logger)
 
       server_thread = Thread.new { server.start }
       sleep 0.05  # Allow the server to bind and enter accept loop
@@ -90,7 +93,7 @@ RSpec.describe SambaDave::Server do
 
     it "can stop a running server" do
       port = free_port
-      server = described_class.new(filesystem: filesystem, port: port)
+      server = described_class.new(filesystem: filesystem, port: port, logger: null_logger)
 
       server_thread = Thread.new { server.start }
       sleep 0.05
@@ -104,7 +107,7 @@ RSpec.describe SambaDave::Server do
 
     it "handles multiple concurrent connections" do
       port = free_port
-      server = described_class.new(filesystem: filesystem, port: port)
+      server = described_class.new(filesystem: filesystem, port: port, logger: null_logger)
 
       server_thread = Thread.new { server.start }
       sleep 0.05

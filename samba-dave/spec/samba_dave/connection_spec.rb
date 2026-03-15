@@ -18,7 +18,7 @@ require "samba_dave/ntlm/spnego"
 RSpec.describe SambaDave::Connection do
   let(:server_guid) { "B" * 16 }
   let(:provider)    { SambaDave::TestSecurityProvider.new("alice" => "wonderland") }
-  let(:server)      { instance_double("SambaDave::Server", server_guid: server_guid, security_provider: provider) }
+  let(:server)      { instance_double("SambaDave::Server", server_guid: server_guid, security_provider: provider, logger: nil) }
 
   C = SambaDave::Protocol::Constants
 
@@ -190,13 +190,13 @@ RSpec.describe SambaDave::Connection do
       expect(resp_header.message_id).to eq(42)
     end
 
-    it "selects SMB 2.0.2 dialect in the response body" do
+    it "selects SMB 2.1 (0x0210) dialect when 0x0210 is among offered dialects" do
       response_data = run_with_frame(negotiate_request_frame(dialects: [0x0202, 0x0210, 0x0302]))
       response_io   = StringIO.new(response_data)
       raw_msg       = SambaDave::Protocol::Transport.read_message(response_io)
       resp_body     = SambaDave::Protocol::Commands::NegotiateResponse.read(raw_msg[64..])
 
-      expect(resp_body.dialect_revision).to eq(0x0202)
+      expect(resp_body.dialect_revision).to eq(0x0210)
     end
 
     it "includes a security buffer (SPNEGO token) in the response" do
@@ -375,7 +375,8 @@ RSpec.describe SambaDave::Connection do
                       server_guid:       server_guid,
                       security_provider: provider,
                       share_name:        "share",
-                      filesystem:        filesystem)
+                      filesystem:        filesystem,
+                      logger:            nil)
     end
 
     after { FileUtils.rm_rf(tmpdir) }
@@ -520,7 +521,8 @@ RSpec.describe SambaDave::Connection do
                       server_guid:       server_guid,
                       security_provider: provider,
                       share_name:        "share",
-                      filesystem:        filesystem)
+                      filesystem:        filesystem,
+                      logger:            nil)
     end
 
     after { FileUtils.rm_rf(tmpdir) }

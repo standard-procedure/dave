@@ -76,6 +76,7 @@ module SambaDave
       @authenticator   = Authenticator.new(server.security_provider)
       @next_session_id = SecureRandom.random_number(2**31) + 1  # non-zero start
       @open_file_table = OpenFileTable.new  # connection-scoped handle table
+      @logger          = server.logger    # may be nil (no logging)
     end
 
     # Run the connection message loop (blocking).
@@ -109,26 +110,33 @@ module SambaDave
         return
       end
 
+      start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       response_result = begin
         dispatch(request_header, raw[64..] || "")
       rescue => e
         # Truncated/malformed body: return INVALID_PARAMETER rather than crashing
         { status: C::Status::INVALID_PARAMETER, body: "" }
       end
+      duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time) * 1000).round(2)
 
       # CANCEL (and future async ops) signal that no response should be sent.
       return if response_result[:skip_response]
+
+      log_command(request_header.command, request_header.session_id,
+                  response_result[:status], duration_ms)
 
       response_status     = response_result[:status]
       response_body       = response_result[:body]
       response_session_id = response_result[:response_session_id]
       response_tree_id    = response_result[:response_tree_id]
 
+      command_hint = response_result[:command_hint]
       response_header = Protocol::Header.response_for(
         request_header,
-        status:     response_status,
-        session_id: response_session_id,
-        tree_id:    response_tree_id
+        status:       response_status,
+        session_id:   response_session_id,
+        tree_id:      response_tree_id,
+        command_hint: command_hint
       )
       send_response(response_header, response_body)
     end
@@ -174,7 +182,7 @@ module SambaDave
         return handle_tree_disconnect(body, session: session, tree_id: header.tree_id)
       when C::Commands::CREATE
         tree_connect = session.find_tree_connect(header.tree_id)
-        return { status: C::Status::INVALID_PARAMETER, body: "" } unless tree_connect
+        return { status: C::Status::NETWORK_NAME_DELETED, body: "" } unless tree_connect
         return handle_create(body, tree_connect: tree_connect)
       when C::Commands::CLOSE
         return handle_close(body)
@@ -216,7 +224,7 @@ module SambaDave
         request,
         server_guid: @server.server_guid
       )
-      { status: C::Status::SUCCESS, body: response_body }
+      { status: C::Status::SUCCESS, body: response_body, command_hint: :negotiate }
     rescue
       { status: C::Status::NOT_IMPLEMENTED, body: "" }
     end
@@ -379,6 +387,46 @@ module SambaDave
     def known_command?(command)
       command <= C::Commands::OPLOCK_BREAK
     end
+
+    # Emit a structured log entry for a completed SMB2 command.
+    # Uses INFO for normal operations, WARN for auth failures, ERROR for others.
+    def log_command(command, session_id, status, duration_ms)
+      return unless @logger
+
+      command_name = COMMAND_NAMES[command] || "CMD_#{command.to_s(16).upcase}"
+
+      if status == C::Status::LOGON_FAILURE
+        @logger.warn(command_name, session_id: session_id, status: status, duration_ms: duration_ms)
+      elsif status != C::Status::SUCCESS && status != C::Status::MORE_PROCESSING_REQUIRED &&
+            status != C::Status::NO_MORE_FILES && status != C::Status::BUFFER_OVERFLOW
+        @logger.error(command_name, session_id: session_id, status: status, duration_ms: duration_ms)
+      else
+        @logger.info(command_name, session_id: session_id, status: status, duration_ms: duration_ms)
+      end
+    end
+
+    # Mapping from command code to human-readable name (for logging)
+    COMMAND_NAMES = {
+      C::Commands::NEGOTIATE       => "NEGOTIATE",
+      C::Commands::SESSION_SETUP   => "SESSION_SETUP",
+      C::Commands::LOGOFF          => "LOGOFF",
+      C::Commands::TREE_CONNECT    => "TREE_CONNECT",
+      C::Commands::TREE_DISCONNECT => "TREE_DISCONNECT",
+      C::Commands::CREATE          => "CREATE",
+      C::Commands::CLOSE           => "CLOSE",
+      C::Commands::FLUSH           => "FLUSH",
+      C::Commands::READ            => "READ",
+      C::Commands::WRITE           => "WRITE",
+      C::Commands::LOCK            => "LOCK",
+      C::Commands::IOCTL           => "IOCTL",
+      C::Commands::CANCEL          => "CANCEL",
+      C::Commands::ECHO            => "ECHO",
+      C::Commands::QUERY_DIRECTORY => "QUERY_DIRECTORY",
+      C::Commands::CHANGE_NOTIFY   => "CHANGE_NOTIFY",
+      C::Commands::QUERY_INFO      => "QUERY_INFO",
+      C::Commands::SET_INFO        => "SET_INFO",
+      C::Commands::OPLOCK_BREAK    => "OPLOCK_BREAK"
+    }.freeze
 
     # Handle an SMB1 COM_NEGOTIATE packet
     def handle_smb1_negotiate(raw)

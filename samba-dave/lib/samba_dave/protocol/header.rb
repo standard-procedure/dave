@@ -74,14 +74,26 @@ module SambaDave
       # Build a response header based on an incoming request header.
       #
       # Sets SERVER_TO_REDIR flag and copies message_id, command, session_id, tree_id.
-      # Credits are granted generously (128).
+      #
+      # Credit policy (SMB 2.1):
+      #   - NEGOTIATE response: grant 32 initial credits (command_hint: :negotiate)
+      #   - Other responses: grant min(max(requested, 1), 128)
       #
       # @param request [Header] the parsed request header
       # @param status [Integer] NT status code for the response
       # @param session_id [Integer, nil] override session_id (nil = copy from request)
       # @param tree_id [Integer, nil] override tree_id (nil = copy from request)
+      # @param command_hint [Symbol, nil] :negotiate to grant 32 initial credits
       # @return [Header] a new response header
-      def self.response_for(request, status: Constants::Status::SUCCESS, session_id: nil, tree_id: nil)
+      def self.response_for(request, status: Constants::Status::SUCCESS,
+                            session_id: nil, tree_id: nil, command_hint: nil)
+        credits = if command_hint == :negotiate
+          32
+        else
+          requested = request.credit_request.to_i
+          [[requested, 1].max, 128].min
+        end
+
         new(
           command:        request.command,
           message_id:     request.message_id,
@@ -89,7 +101,7 @@ module SambaDave
           tree_id:        tree_id || request.tree_id,
           flags:          Constants::Flags::SERVER_TO_REDIR,
           status:         status,
-          credit_request: 128  # generous credit grant
+          credit_request: credits
         )
       end
     end

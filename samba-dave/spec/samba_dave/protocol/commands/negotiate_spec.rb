@@ -84,13 +84,13 @@ RSpec.describe SambaDave::Protocol::Commands::Negotiate do
       expect(resp.dialect_revision).to eq(0x0202)
     end
 
-    it "selects SMB 2.0.2 when multiple dialects are offered" do
+    it "selects SMB 2.1 (0x0210) when multiple dialects including 0x0210 are offered" do
       raw = build_negotiate_request_binary(dialects: [0x0202, 0x0210, 0x0302, 0x0311])
       request = SambaDave::Protocol::Commands::NegotiateRequest.read(raw)
       response_body = handler.handle(request, server_guid: server_guid)
       resp = SambaDave::Protocol::Commands::NegotiateResponse.read(response_body)
 
-      expect(resp.dialect_revision).to eq(0x0202)
+      expect(resp.dialect_revision).to eq(0x0210)
     end
 
     it "includes server GUID in the response" do
