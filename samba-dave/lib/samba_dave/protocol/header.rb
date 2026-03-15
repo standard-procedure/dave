@@ -79,13 +79,14 @@ module SambaDave
       # @param request [Header] the parsed request header
       # @param status [Integer] NT status code for the response
       # @param session_id [Integer, nil] override session_id (nil = copy from request)
+      # @param tree_id [Integer, nil] override tree_id (nil = copy from request)
       # @return [Header] a new response header
-      def self.response_for(request, status: Constants::Status::SUCCESS, session_id: nil)
+      def self.response_for(request, status: Constants::Status::SUCCESS, session_id: nil, tree_id: nil)
         new(
           command:        request.command,
           message_id:     request.message_id,
           session_id:     session_id || request.session_id,
-          tree_id:        request.tree_id,
+          tree_id:        tree_id || request.tree_id,
           flags:          Constants::Flags::SERVER_TO_REDIR,
           status:         status,
           credit_request: 128  # generous credit grant

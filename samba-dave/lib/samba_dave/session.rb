@@ -19,6 +19,8 @@ module SambaDave
       @user_identity  = nil
       @session_key    = nil
       @authenticated  = false
+      @tree_connects  = {}  # tree_id (Integer) → TreeConnect
+      @next_tree_id   = 1
     end
 
     # Mark session as authenticated with a user identity.
@@ -34,6 +36,39 @@ module SambaDave
     # @return [Boolean] true if SESSION_SETUP has completed successfully
     def authenticated?
       @authenticated
+    end
+
+    # ── Tree Connect Management ──────────────────────────────────────────────
+
+    # Allocate a new unique TreeId (monotonically increasing, non-zero, 32-bit).
+    #
+    # @return [Integer]
+    def allocate_tree_id
+      id = @next_tree_id
+      @next_tree_id = (@next_tree_id % 0xFFFFFFFE) + 1
+      id
+    end
+
+    # Register a new tree connect under its tree_id.
+    #
+    # @param tree_connect [TreeConnect]
+    def add_tree_connect(tree_connect)
+      @tree_connects[tree_connect.tree_id] = tree_connect
+    end
+
+    # Look up an active tree connect by tree_id.
+    #
+    # @param tree_id [Integer]
+    # @return [TreeConnect, nil]
+    def find_tree_connect(tree_id)
+      @tree_connects[tree_id]
+    end
+
+    # Remove a tree connect. Silently ignores unknown tree_ids.
+    #
+    # @param tree_id [Integer]
+    def remove_tree_connect(tree_id)
+      @tree_connects.delete(tree_id)
     end
   end
 end

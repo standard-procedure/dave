@@ -7,8 +7,22 @@ require "samba_dave/protocol/transport"
 require "samba_dave/protocol/commands/negotiate"
 require "samba_dave/protocol/commands/session_setup"
 require "samba_dave/protocol/commands/logoff"
+require "samba_dave/protocol/commands/echo"
+require "samba_dave/protocol/commands/tree_connect"
+require "samba_dave/protocol/commands/create"
+require "samba_dave/protocol/commands/close"
+require "samba_dave/protocol/commands/query_info"
+require "samba_dave/protocol/commands/query_directory"
+require "samba_dave/protocol/commands/read"
+require "samba_dave/protocol/commands/write"
+require "samba_dave/protocol/commands/flush"
+require "samba_dave/protocol/commands/cancel"
+require "samba_dave/protocol/commands/set_info"
 require "samba_dave/authenticator"
 require "samba_dave/session"
+require "samba_dave/tree_connect"
+require "samba_dave/open_file"
+require "samba_dave/open_file_table"
 
 module SambaDave
   # Per-connection state machine.
@@ -58,6 +72,7 @@ module SambaDave
       @sessions_mutex  = Mutex.new
       @authenticator   = Authenticator.new(server.security_provider)
       @next_session_id = SecureRandom.random_number(2**31) + 1  # non-zero start
+      @open_file_table = OpenFileTable.new  # connection-scoped handle table
     end
 
     # Run the connection message loop (blocking).
@@ -93,14 +108,19 @@ module SambaDave
 
       response_result = dispatch(request_header, raw[64..] || "")
 
+      # CANCEL (and future async ops) signal that no response should be sent.
+      return if response_result[:skip_response]
+
       response_status     = response_result[:status]
       response_body       = response_result[:body]
       response_session_id = response_result[:response_session_id]
+      response_tree_id    = response_result[:response_tree_id]
 
       response_header = Protocol::Header.response_for(
         request_header,
         status:     response_status,
-        session_id: response_session_id
+        session_id: response_session_id,
+        tree_id:    response_tree_id
       )
       send_response(response_header, response_body)
     end
@@ -125,6 +145,40 @@ module SambaDave
       # All other commands require an authenticated session
       unless authenticated_session?(session_id)
         return { status: C::Status::USER_SESSION_DELETED, body: "" }
+      end
+
+      session = @sessions[session_id]
+
+      # Phase 3 commands — tree connect, file operations, echo
+      case command
+      when C::Commands::ECHO
+        return handle_echo(body)
+      when C::Commands::TREE_CONNECT
+        return handle_tree_connect(body, session: session)
+      when C::Commands::TREE_DISCONNECT
+        return handle_tree_disconnect(body, session: session, tree_id: header.tree_id)
+      when C::Commands::CREATE
+        tree_connect = session.find_tree_connect(header.tree_id)
+        return { status: C::Status::INVALID_PARAMETER, body: "" } unless tree_connect
+        return handle_create(body, tree_connect: tree_connect)
+      when C::Commands::CLOSE
+        return handle_close(body)
+      when C::Commands::QUERY_INFO
+        return handle_query_info(body)
+      when C::Commands::QUERY_DIRECTORY
+        return handle_query_directory(body)
+
+      # Phase 4 commands
+      when C::Commands::READ
+        return handle_read(body)
+      when C::Commands::WRITE
+        return handle_write(body)
+      when C::Commands::FLUSH
+        return handle_flush(body)
+      when C::Commands::CANCEL
+        return handle_cancel(body)
+      when C::Commands::SET_INFO
+        return handle_set_info(body)
       end
 
       # Unimplemented commands (future phases)
@@ -183,6 +237,99 @@ module SambaDave
         body,
         session_id: session_id,
         sessions:   @sessions
+      )
+    end
+
+    # Handle SMB2 ECHO
+    def handle_echo(body)
+      Protocol::Commands::Echo.handle(body)
+    end
+
+    # Handle SMB2 TREE_CONNECT
+    def handle_tree_connect(body, session:)
+      Protocol::Commands::TreeConnectCmd.handle(
+        body,
+        session: session,
+        server:  @server
+      )
+    end
+
+    # Handle SMB2 TREE_DISCONNECT
+    def handle_tree_disconnect(body, session:, tree_id:)
+      Protocol::Commands::TreeDisconnectCmd.handle(
+        body,
+        session:  session,
+        tree_id:  tree_id
+      )
+    end
+
+    # Handle SMB2 CREATE
+    def handle_create(body, tree_connect:)
+      Protocol::Commands::Create.handle(
+        body,
+        tree_connect:    tree_connect,
+        open_file_table: @open_file_table
+      )
+    end
+
+    # Handle SMB2 CLOSE
+    def handle_close(body)
+      Protocol::Commands::Close.handle(
+        body,
+        open_file_table: @open_file_table
+      )
+    end
+
+    # Handle SMB2 QUERY_INFO
+    def handle_query_info(body)
+      Protocol::Commands::QueryInfo.handle(
+        body,
+        open_file_table: @open_file_table
+      )
+    end
+
+    # Handle SMB2 QUERY_DIRECTORY
+    def handle_query_directory(body)
+      Protocol::Commands::QueryDirectory.handle(
+        body,
+        open_file_table: @open_file_table
+      )
+    end
+
+    # Handle SMB2 READ
+    def handle_read(body)
+      Protocol::Commands::Read.handle(
+        body,
+        open_file_table: @open_file_table
+      )
+    end
+
+    # Handle SMB2 WRITE
+    def handle_write(body)
+      Protocol::Commands::Write.handle(
+        body,
+        open_file_table: @open_file_table
+      )
+    end
+
+    # Handle SMB2 FLUSH
+    def handle_flush(body)
+      Protocol::Commands::Flush.handle(
+        body,
+        open_file_table: @open_file_table
+      )
+    end
+
+    # Handle SMB2 CANCEL (no response sent)
+    def handle_cancel(body)
+      Protocol::Commands::Cancel.handle(body)
+    end
+
+    # Handle SMB2 SET_INFO
+    def handle_set_info(body)
+      Protocol::Commands::SetInfo.handle(
+        body,
+        open_file_table: @open_file_table
       )
     end
 

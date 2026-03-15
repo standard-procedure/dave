@@ -43,10 +43,12 @@ RSpec.describe SambaDave::Connection do
   # Run the connection in a thread, enabling interactive I/O.
   # Yields the client socket; caller writes requests and reads responses.
   # Closes the client after the block.
-  def with_connected_server
+  # Pass `custom_server:` to use a different server double (e.g. one with filesystem).
+  def with_connected_server(custom_server = nil)
+    srv = custom_server || server
     client_sock, server_sock = UNIXSocket.pair
     server_thread = Thread.new do
-      conn = described_class.new(server_sock, server)
+      conn = described_class.new(server_sock, srv)
       conn.run
     end
     yield client_sock
@@ -63,11 +65,12 @@ RSpec.describe SambaDave::Connection do
   end
 
   # Write one SMB2 request (header + body, framed)
-  def write_smb2_request(sock, command:, body: "", message_id: 1, session_id: 0)
+  def write_smb2_request(sock, command:, body: "", message_id: 1, session_id: 0, tree_id: 0)
     header = SambaDave::Protocol::Header.new(
       command:    command,
       message_id: message_id,
-      session_id: session_id
+      session_id: session_id,
+      tree_id:    tree_id
     )
     SambaDave::Protocol::Transport.write_message(sock, header.to_binary_s + body.b)
   end
@@ -353,6 +356,387 @@ RSpec.describe SambaDave::Connection do
                                    message_id: 3, session_id: assigned_session_id)
         round2 = read_smb2_response(client)
         expect(round2[:header].status).to eq(C::Status::LOGON_FAILURE)
+      end
+    end
+  end
+
+  # ── Phase 3: Tree Connect + File Operations (integration) ────────────────────
+
+  describe "#run — Phase 3 commands (integration)" do
+    require "dave/file_system_provider"
+    require "fileutils"
+    require "tmpdir"
+    require "samba_dave/protocol/commands/create"
+
+    let(:tmpdir)     { Dir.mktmpdir("samba_dave_spec") }
+    let(:filesystem) { Dave::FileSystemProvider.new(root: tmpdir) }
+    let(:server3) do
+      instance_double("SambaDave::Server",
+                      server_guid:       server_guid,
+                      security_provider: provider,
+                      share_name:        "share",
+                      filesystem:        filesystem)
+    end
+
+    after { FileUtils.rm_rf(tmpdir) }
+
+    # Perform a full authenticate flow; returns the session_id.
+    def full_auth(client)
+      write_smb2_request(client, command: C::Commands::NEGOTIATE,
+                                 body: negotiate_request_body, message_id: 1)
+      read_smb2_response(client)  # discard NEGOTIATE response
+
+      spnego1 = build_type1_spnego
+      write_smb2_request(client, command: C::Commands::SESSION_SETUP,
+                                 body: session_setup_request_body(spnego1),
+                                 message_id: 2, session_id: 0)
+      round1 = read_smb2_response(client)
+      sid    = round1[:header].session_id
+
+      r1    = SambaDave::Protocol::Commands::SessionSetupResponse.read(round1[:body])
+      t2b   = SambaDave::NTLM::SPNEGO.unwrap(r1.security_buffer)
+      t2    = Net::NTLM::Message.parse(t2b)
+      t3    = t2.response({ user: "alice", password: "wonderland", domain: "" }, ntlmv2: true)
+      spnego3 = build_spnego_neg_token_resp(t3.serialize.b)
+
+      write_smb2_request(client, command: C::Commands::SESSION_SETUP,
+                                 body: session_setup_request_body(spnego3),
+                                 message_id: 3, session_id: sid)
+      read_smb2_response(client)  # discard round 2 response
+      sid
+    end
+
+    def tree_connect_body(unc_path)
+      path_bytes = unc_path.encode("UTF-16LE").b
+      [9, 0, 72, path_bytes.bytesize].pack("S<S<S<S<") + path_bytes
+    end
+
+    def build_create_body_for(name, disposition: 1, options: 0)
+      name_bytes  = name.encode("UTF-16LE").b
+      name_offset = 64 + 56
+      [
+        57, 0, 0, 0, 0, 0, 0, 0,
+        0x001F01FF, 0, 7, disposition, options,
+        name_offset, name_bytes.bytesize, 0, 0
+      ].pack("S<CCL<L<L<L<L<L<L<L<L<L<S<S<L<L<") + name_bytes
+    end
+
+    it "responds to ECHO with STATUS_SUCCESS when authenticated" do
+      with_connected_server(server3) do |client|
+        sid = full_auth(client)
+        write_smb2_request(client, command: C::Commands::ECHO,
+                                   body: [4, 0].pack("S<S<"),
+                                   message_id: 10, session_id: sid)
+        expect(read_smb2_response(client)[:header].status).to eq(C::Status::SUCCESS)
+      end
+    end
+
+    it "handles TREE_CONNECT for the configured share" do
+      with_connected_server(server3) do |client|
+        sid = full_auth(client)
+        write_smb2_request(client, command: C::Commands::TREE_CONNECT,
+                                   body: tree_connect_body("\\\\server\\share"),
+                                   message_id: 10, session_id: sid)
+        resp = read_smb2_response(client)
+        expect(resp[:header].status).to eq(C::Status::SUCCESS)
+        expect(resp[:header].tree_id).to be > 0
+      end
+    end
+
+    it "returns STATUS_BAD_NETWORK_NAME for an unknown share" do
+      with_connected_server(server3) do |client|
+        sid = full_auth(client)
+        write_smb2_request(client, command: C::Commands::TREE_CONNECT,
+                                   body: tree_connect_body("\\\\server\\doesnotexist"),
+                                   message_id: 10, session_id: sid)
+        resp = read_smb2_response(client)
+        expect(resp[:header].status).to eq(C::Status::BAD_NETWORK_NAME)
+      end
+    end
+
+    it "can TREE_CONNECT → CREATE root → CLOSE successfully" do
+      with_connected_server(server3) do |client|
+        sid = full_auth(client)
+
+        # TREE_CONNECT
+        write_smb2_request(client, command: C::Commands::TREE_CONNECT,
+                                   body: tree_connect_body("\\\\server\\share"),
+                                   message_id: 10, session_id: sid)
+        tc   = read_smb2_response(client)
+        tid  = tc[:header].tree_id
+
+        # CREATE root directory (empty name, OPEN disposition, DIRECTORY_FILE option)
+        write_smb2_request(client, command: C::Commands::CREATE,
+                                   body: build_create_body_for("", disposition: 1, options: 0x01),
+                                   message_id: 11, session_id: sid, tree_id: tid)
+        cr   = read_smb2_response(client)
+        expect(cr[:header].status).to eq(C::Status::SUCCESS)
+
+        crb  = SambaDave::Protocol::Commands::CreateResponse.read(cr[:body])
+        p    = crb.file_id_persistent
+        v    = crb.file_id_volatile
+
+        # CLOSE
+        write_smb2_request(client, command: C::Commands::CLOSE,
+                                   body: [24, 0, 0, p, v].pack("S<S<L<Q<Q<"),
+                                   message_id: 12, session_id: sid, tree_id: tid)
+        expect(read_smb2_response(client)[:header].status).to eq(C::Status::SUCCESS)
+      end
+    end
+
+    it "handles TREE_DISCONNECT" do
+      with_connected_server(server3) do |client|
+        sid = full_auth(client)
+        write_smb2_request(client, command: C::Commands::TREE_CONNECT,
+                                   body: tree_connect_body("\\\\server\\share"),
+                                   message_id: 10, session_id: sid)
+        tid = read_smb2_response(client)[:header].tree_id
+
+        write_smb2_request(client, command: C::Commands::TREE_DISCONNECT,
+                                   body: [4, 0].pack("S<S<"),
+                                   message_id: 11, session_id: sid, tree_id: tid)
+        expect(read_smb2_response(client)[:header].status).to eq(C::Status::SUCCESS)
+      end
+    end
+  end
+
+  # ── Phase 4: Read/Write File Operations (integration) ────────────────────────
+
+  describe "#run — Phase 4 commands (integration)" do
+    require "dave/file_system_provider"
+    require "fileutils"
+    require "tmpdir"
+    require "samba_dave/protocol/commands/create"
+    require "samba_dave/protocol/commands/read"
+    require "samba_dave/protocol/commands/write"
+    require "samba_dave/protocol/commands/flush"
+    require "samba_dave/protocol/commands/cancel"
+    require "samba_dave/protocol/commands/set_info"
+
+    let(:tmpdir)     { Dir.mktmpdir("samba_dave_phase4_spec") }
+    let(:filesystem) { Dave::FileSystemProvider.new(root: tmpdir) }
+    let(:server4) do
+      instance_double("SambaDave::Server",
+                      server_guid:       server_guid,
+                      security_provider: provider,
+                      share_name:        "share",
+                      filesystem:        filesystem)
+    end
+
+    after { FileUtils.rm_rf(tmpdir) }
+
+    # Helpers ──────────────────────────────────────────────────────────────────
+
+    def full_auth4(client)
+      write_smb2_request(client, command: C::Commands::NEGOTIATE,
+                                 body: negotiate_request_body, message_id: 1)
+      read_smb2_response(client)
+
+      spnego1 = build_type1_spnego
+      write_smb2_request(client, command: C::Commands::SESSION_SETUP,
+                                 body: session_setup_request_body(spnego1),
+                                 message_id: 2, session_id: 0)
+      round1 = read_smb2_response(client)
+      sid    = round1[:header].session_id
+
+      r1    = SambaDave::Protocol::Commands::SessionSetupResponse.read(round1[:body])
+      t2b   = SambaDave::NTLM::SPNEGO.unwrap(r1.security_buffer)
+      t2    = Net::NTLM::Message.parse(t2b)
+      t3    = t2.response({ user: "alice", password: "wonderland", domain: "" }, ntlmv2: true)
+      spnego3 = build_spnego_neg_token_resp(t3.serialize.b)
+
+      write_smb2_request(client, command: C::Commands::SESSION_SETUP,
+                                 body: session_setup_request_body(spnego3),
+                                 message_id: 3, session_id: sid)
+      read_smb2_response(client)
+      sid
+    end
+
+    def tree_connect_body4(unc_path)
+      path_bytes = unc_path.encode("UTF-16LE").b
+      [9, 0, 72, path_bytes.bytesize].pack("S<S<S<S<") + path_bytes
+    end
+
+    def build_create_body_for4(name, disposition: 3, options: 0)
+      name_bytes  = name.encode("UTF-16LE").b
+      name_offset = 64 + 56
+      [
+        57, 0, 0, 0, 0, 0, 0, 0,
+        0x001F01FF, 0, 7, disposition, options,
+        name_offset, name_bytes.bytesize, 0, 0
+      ].pack("S<CCL<L<L<L<L<L<L<L<L<L<S<S<L<L<") + name_bytes
+    end
+
+    # Setup: authenticate, tree connect; yields (client, session_id, tree_id)
+    def with_share(client)
+      sid = full_auth4(client)
+      write_smb2_request(client, command: C::Commands::TREE_CONNECT,
+                                 body: tree_connect_body4("\\\\server\\share"),
+                                 message_id: 10, session_id: sid)
+      resp = read_smb2_response(client)
+      tid  = resp[:header].tree_id
+      yield client, sid, tid
+    end
+
+    # Open a file via CREATE (OPEN_IF by default), return [persistent, volatile]
+    def create_file(client, name, sid:, tid:, msg_id: 20, disposition: 3)
+      write_smb2_request(client, command: C::Commands::CREATE,
+                                 body: build_create_body_for4(name, disposition: disposition),
+                                 message_id: msg_id, session_id: sid, tree_id: tid)
+      cr  = read_smb2_response(client)
+      crb = SambaDave::Protocol::Commands::CreateResponse.read(cr[:body])
+      [crb.file_id_persistent, crb.file_id_volatile]
+    end
+
+    def build_read_body4(p, v, length:, offset:)
+      [49, 0, 0, length, offset, p, v, 0, 0, 0, 0, 0, 0].pack("S<CCL<Q<Q<Q<L<L<L<S<S<C")
+    end
+
+    def build_write_body4(p, v, data, file_offset:)
+      data_offset = 112
+      [49, data_offset, data.bytesize, file_offset, p, v, 0, 0, 0, 0, 0].pack("S<S<L<Q<Q<Q<L<L<S<S<L<") + data.b
+    end
+
+    def build_flush_body4(p, v)
+      [24, 0, 0, p, v].pack("S<S<L<Q<Q<")
+    end
+
+    def build_cancel_body4
+      [4, 0].pack("S<S<")
+    end
+
+    def build_set_info_body4(p, v, info_type:, info_class:, buffer:)
+      buffer_offset = 96
+      [33, info_type, info_class, buffer.bytesize,
+       buffer_offset, 0, 0, p, v].pack("S<CCL<S<S<L<Q<Q<") + buffer.b
+    end
+
+    # Tests ────────────────────────────────────────────────────────────────────
+
+    it "handles WRITE and READ round-trip" do
+      File.write(File.join(tmpdir, "test.txt"), "")
+
+      with_connected_server(server4) do |client|
+        with_share(client) do |c, sid, tid|
+          p, v = create_file(c, "test.txt", sid: sid, tid: tid, msg_id: 20)
+
+          # WRITE
+          write_smb2_request(c, command: C::Commands::WRITE,
+                               body: build_write_body4(p, v, "Hello, World!", file_offset: 0),
+                               message_id: 21, session_id: sid, tree_id: tid)
+          wr = read_smb2_response(c)
+          expect(wr[:header].status).to eq(C::Status::SUCCESS)
+
+          # READ back
+          write_smb2_request(c, command: C::Commands::READ,
+                               body: build_read_body4(p, v, length: 100, offset: 0),
+                               message_id: 22, session_id: sid, tree_id: tid)
+          rr = read_smb2_response(c)
+          expect(rr[:header].status).to eq(C::Status::SUCCESS)
+          resp = SambaDave::Protocol::Commands::ReadResponse.read(rr[:body])
+          expect(resp.buffer).to eq("Hello, World!")
+        end
+      end
+    end
+
+    it "handles FLUSH with STATUS_SUCCESS" do
+      File.write(File.join(tmpdir, "flush.txt"), "data")
+
+      with_connected_server(server4) do |client|
+        with_share(client) do |c, sid, tid|
+          p, v = create_file(c, "flush.txt", sid: sid, tid: tid, msg_id: 20)
+
+          write_smb2_request(c, command: C::Commands::FLUSH,
+                               body: build_flush_body4(p, v),
+                               message_id: 21, session_id: sid, tree_id: tid)
+          resp = read_smb2_response(c)
+          expect(resp[:header].status).to eq(C::Status::SUCCESS)
+        end
+      end
+    end
+
+    it "handles CANCEL (no response sent)" do
+      with_connected_server(server4) do |client|
+        with_share(client) do |c, sid, tid|
+          # Send CANCEL followed by ECHO — only ECHO response should arrive
+          write_smb2_request(c, command: C::Commands::CANCEL,
+                               body: build_cancel_body4,
+                               message_id: 30, session_id: sid, tree_id: tid)
+          write_smb2_request(c, command: C::Commands::ECHO,
+                               body: [4, 0].pack("S<S<"),
+                               message_id: 31, session_id: sid, tree_id: tid)
+
+          resp = read_smb2_response(c)
+          # We expect the ECHO response, not a CANCEL response
+          expect(resp[:header].command).to eq(C::Commands::ECHO)
+          expect(resp[:header].status).to eq(C::Status::SUCCESS)
+        end
+      end
+    end
+
+    it "handles SET_INFO FileDispositionInformation (delete-on-close)" do
+      File.write(File.join(tmpdir, "to_delete.txt"), "bye")
+
+      with_connected_server(server4) do |client|
+        with_share(client) do |c, sid, tid|
+          p, v = create_file(c, "to_delete.txt", sid: sid, tid: tid, msg_id: 20)
+
+          # Set delete-on-close
+          buf = [1].pack("C")
+          write_smb2_request(c, command: C::Commands::SET_INFO,
+                               body: build_set_info_body4(p, v, info_type: 1, info_class: 0x0D, buffer: buf),
+                               message_id: 21, session_id: sid, tree_id: tid)
+          si = read_smb2_response(c)
+          expect(si[:header].status).to eq(C::Status::SUCCESS)
+
+          # CLOSE — should trigger delete
+          write_smb2_request(c, command: C::Commands::CLOSE,
+                               body: [24, 0, 0, p, v].pack("S<S<L<Q<Q<"),
+                               message_id: 22, session_id: sid, tree_id: tid)
+          read_smb2_response(c)
+
+          expect(File.exist?(File.join(tmpdir, "to_delete.txt"))).to be false
+        end
+      end
+    end
+
+    it "returns STATUS_END_OF_FILE when reading past end of file" do
+      File.write(File.join(tmpdir, "small.txt"), "hi")
+
+      with_connected_server(server4) do |client|
+        with_share(client) do |c, sid, tid|
+          p, v = create_file(c, "small.txt", sid: sid, tid: tid, msg_id: 20)
+
+          write_smb2_request(c, command: C::Commands::READ,
+                               body: build_read_body4(p, v, length: 100, offset: 9999),
+                               message_id: 21, session_id: sid, tree_id: tid)
+          resp = read_smb2_response(c)
+          expect(resp[:header].status).to eq(C::Status::END_OF_FILE)
+        end
+      end
+    end
+
+    it "handles SET_INFO FileRenameInformation" do
+      File.write(File.join(tmpdir, "rename_me.txt"), "content")
+
+      with_connected_server(server4) do |client|
+        with_share(client) do |c, sid, tid|
+          p, v = create_file(c, "rename_me.txt", sid: sid, tid: tid, msg_id: 20)
+
+          new_name = "/renamed.txt".encode("UTF-16LE").b
+          buf = [0].pack("C") +
+                ("\x00" * 7) +
+                [0].pack("Q<") +
+                [new_name.bytesize].pack("L<") +
+                new_name
+
+          write_smb2_request(c, command: C::Commands::SET_INFO,
+                               body: build_set_info_body4(p, v, info_type: 1, info_class: 0x0A, buffer: buf),
+                               message_id: 21, session_id: sid, tree_id: tid)
+          resp = read_smb2_response(c)
+          expect(resp[:header].status).to eq(C::Status::SUCCESS)
+          expect(File.exist?(File.join(tmpdir, "renamed.txt"))).to be true
+        end
       end
     end
   end

@@ -54,6 +54,8 @@ module SambaDave
         NO_MORE_FILES             = 0x80000006
         NOT_SUPPORTED             = 0xC00000BB
         USER_SESSION_DELETED      = 0xC0000203
+        END_OF_FILE               = 0xC0000011
+        CANCELLED                 = 0xC0000120
       end
 
       # Header flags (32-bit bitmask at offset 16)
