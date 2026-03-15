@@ -1,4 +1,5 @@
 require "time"
+require "base64"
 require_relative "errors"
 require_relative "principal"
 require_relative "resource"
@@ -32,15 +33,23 @@ module Dave
       PROPFIND PROPPATCH COPY MOVE LOCK UNLOCK
     ].freeze
 
-    def initialize(filesystem:, prefix: "")
+    READ_METHODS = %w[GET HEAD OPTIONS PROPFIND].freeze
+
+    def initialize(filesystem:, prefix: "", security: nil)
       @filesystem   = filesystem
       @prefix       = prefix
       @lock_manager = LockManager.new
+      @security     = security
     end
 
     def call(env)
       request = Request.new(env)
       method  = request.request_method.upcase
+
+      if @security
+        auth_response = check_auth(request, method)
+        return auth_response if auth_response
+      end
 
       case method
       when "OPTIONS"  then Handlers::OptionsHandler.new(@filesystem, @lock_manager, request).call
@@ -60,6 +69,37 @@ module Dave
       end
     rescue => e
       Response.build(500, {}, "Internal Server Error: #{e.message}")
+    end
+
+    private
+
+    def check_auth(request, method)
+      auth_header = request.get_header("HTTP_AUTHORIZATION")
+
+      principal = if auth_header&.start_with?("Basic ")
+        encoded = auth_header.sub("Basic ", "")
+        decoded = Base64.decode64(encoded)
+        username, password = decoded.split(":", 2)
+        @security.authenticate(username: username, password: password)
+      end
+
+      unless principal
+        return Response.build(401,
+          { "WWW-Authenticate" => @security.challenge },
+          "Unauthorized")
+      end
+
+      operation = if READ_METHODS.include?(method)
+        :read
+      else
+        :write
+      end
+
+      unless @security.authorize(principal, request.path, operation)
+        return Response.build(403, {}, "Forbidden")
+      end
+
+      nil
     end
   end
 end

@@ -1,9 +1,11 @@
+require_relative "security_interface/compliance_tests"
+
 module Dave
   module SecurityInterface
-    # Authenticates a request. Returns an authenticated Principal or nil.
-    # @param request [Rack::Request]
+    # Authenticates credentials. Returns an authenticated Principal or nil.
+    # @param credentials [Hash] with :username and :password keys
     # @return [Dave::Principal, nil]
-    def authenticate(request) = raise NotImplementedError
+    def authenticate(credentials) = raise NotImplementedError
 
     # Returns the WWW-Authenticate challenge string.
     # @return [String] e.g. 'Basic realm="WebDAV"'

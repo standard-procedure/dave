@@ -1,4 +1,11 @@
 PATH
+  remote: ../dave-server
+  specs:
+    dave-server (0.1.0)
+      nokogiri
+      rack (>= 2.0)
+
+PATH
   remote: .
   specs:
     dave-security (0.1.0)
@@ -10,9 +17,10 @@ GEM
     bcrypt (3.1.21)
     diff-lcs (1.6.2)
     docile (1.4.1)
+    nokogiri (1.19.1-x86_64-linux-gnu)
+      racc (~> 1.4)
+    racc (1.8.1)
     rack (3.2.5)
-    rack-test (2.2.0)
-      rack (>= 1.3)
     rspec (3.13.2)
       rspec-core (~> 3.13.0)
       rspec-expectations (~> 3.13.0)
@@ -34,22 +42,23 @@ GEM
     simplecov_json_formatter (0.1.4)
 
 PLATFORMS
-  ruby
   x86_64-linux
 
 DEPENDENCIES
   dave-security!
-  rack-test
+  dave-server!
   rspec (~> 3.0)
   simplecov
 
 CHECKSUMS
   bcrypt (3.1.21) sha256=5964613d750a42c7ee5dc61f7b9336fb6caca429ba4ac9f2011609946e4a2dcf
   dave-security (0.1.0)
+  dave-server (0.1.0)
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
   docile (1.4.1) sha256=96159be799bfa73cdb721b840e9802126e4e03dfc26863db73647204c727f21e
+  nokogiri (1.19.1-x86_64-linux-gnu) sha256=1a4902842a186b4f901078e692d12257678e6133858d0566152fe29cdb98456a
+  racc (1.8.1) sha256=4a7f6929691dbec8b5209a0b373bc2614882b55fc5d2e447a21aaa691303d62f
   rack (3.2.5) sha256=4cbd0974c0b79f7a139b4812004a62e4c60b145cba76422e288ee670601ed6d3
-  rack-test (2.2.0) sha256=005a36692c306ac0b4a9350355ee080fd09ddef1148a5f8b2ac636c720f5c463
   rspec (3.13.2) sha256=206284a08ad798e61f86d7ca3e376718d52c0bc944626b2349266f239f820587
   rspec-core (3.13.6) sha256=a8823c6411667b60a8bca135364351dda34cd55e44ff94c4be4633b37d828b2d
   rspec-expectations (3.13.5) sha256=33a4d3a1d95060aea4c94e9f237030a8f9eae5615e9bd85718fe3a09e4b58836
