@@ -81,6 +81,16 @@ RSpec.describe Dave::SecurityConfiguration do
     it "returns nil for unknown user" do
       expect(subject.authenticate(username: "charlie", password: "anything")).to be_nil
     end
+
+    it "accepts string-keyed credentials" do
+      principal = subject.authenticate("username" => "alice", "password" => "alice_password")
+      expect(principal).not_to be_nil
+      expect(principal.id).to eq("alice")
+    end
+
+    it "returns nil for string-keyed wrong password" do
+      expect(subject.authenticate("username" => "alice", "password" => "wrong")).to be_nil
+    end
   end
 
   describe "#challenge" do

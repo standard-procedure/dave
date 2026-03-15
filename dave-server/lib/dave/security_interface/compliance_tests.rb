@@ -15,7 +15,7 @@ module Dave
   module SecurityInterface
     module ComplianceTests
       def self.included(base)
-        base.describe "SecurityInterface compliance" do
+        base.describe "Security Provider compliance" do
           # --- authenticate ---
 
           describe "#authenticate" do

@@ -1,14 +1,7 @@
 require "bcrypt"
 require "yaml"
-
-# Require Dave::Principal — load from dave-server if available, otherwise define it.
-begin
-  require "dave/principal"
-rescue LoadError
-  module Dave
-    Principal = Data.define(:id, :display_name) unless defined?(Principal)
-  end
-end
+require "dave/principal"
+require "dave/security_interface"
 
 module Dave
   # Dave::SecurityConfiguration is the default authentication and authorisation
@@ -29,6 +22,7 @@ module Dave
   #           permission: read_write
   #
   class SecurityConfiguration
+    include Dave::SecurityInterface
     VERSION = "0.1.0"
 
     # @param source [String] either a file path (if the file exists) or raw YAML
