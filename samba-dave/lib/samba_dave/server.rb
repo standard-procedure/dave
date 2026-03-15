@@ -2,6 +2,7 @@
 
 require "socket"
 require "securerandom"
+require "samba_dave/security_provider"
 require "samba_dave/connection"
 
 module SambaDave
@@ -30,20 +31,20 @@ module SambaDave
   class Server
     VERSION = "0.1.0"
 
-    attr_reader :server_guid, :share_name, :port, :filesystem
+    attr_reader :server_guid, :share_name, :port, :filesystem, :security_provider
 
     # @param filesystem [Dave::FileSystemInterface] file operations provider
-    # @param security [Dave::SecurityInterface, nil] authentication provider (nil = no auth)
+    # @param security [SecurityProvider, nil] authentication provider (nil = open access with empty TestSecurityProvider)
     # @param share_name [String] name of the SMB share
     # @param port [Integer] TCP port to listen on (445 = standard, 4450 = development)
     def initialize(filesystem:, share_name: "share", security: nil, port: 445)
-      @filesystem  = filesystem
-      @security    = security
-      @share_name  = share_name
-      @port        = port
-      @server_guid = SecureRandom.bytes(16)
-      @running     = false
-      @connections = {}
+      @filesystem        = filesystem
+      @security_provider = security || SambaDave::TestSecurityProvider.new
+      @share_name        = share_name
+      @port              = port
+      @server_guid       = SecureRandom.bytes(16)
+      @running           = false
+      @connections       = {}
       @connections_mutex = Mutex.new
     end
 

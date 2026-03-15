@@ -53,6 +53,7 @@ module SambaDave
         BUFFER_OVERFLOW           = 0x80000005
         NO_MORE_FILES             = 0x80000006
         NOT_SUPPORTED             = 0xC00000BB
+        USER_SESSION_DELETED      = 0xC0000203
       end
 
       # Header flags (32-bit bitmask at offset 16)
