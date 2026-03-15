@@ -1,9 +1,5 @@
 require "spec_helper"
 
-# dave-server is added to the load path in spec_helper.rb before the security gem
-# loads, so Dave::Principal is already defined. Require SecurityInterface here for
-# the ComplianceTests module.
-require "dave/security_interface"
 
 RSpec.describe Dave::SecurityConfiguration do
   # Shared YAML config used across all tests.
@@ -34,19 +30,7 @@ RSpec.describe Dave::SecurityConfiguration do
 
   subject { Dave::SecurityConfiguration.new(config_yaml) }
 
-  # ComplianceTests lets
-  let(:valid_credentials)     { { username: "alice", password: "alice_password" } }
-  let(:read_only_credentials) { { username: "bob",   password: "bob_password" } }
-  let(:invalid_credentials)   { { username: "alice", password: "wrong_password" } }
-
-  # Paths for compliance tests
-  let(:read_write_path) { "/docs/report.txt" }   # alice has read_write on /docs/
-  let(:read_only_path)  { "/public/index.html" } # bob has read on /public/
-  let(:restricted_path) { "/secret/data.txt" }   # neither user has access
-
-  include Dave::SecurityInterface::ComplianceTests
-
-  # --- Additional unit tests ---
+  # --- Unit tests ---
 
   describe "#initialize" do
     it "accepts a YAML string" do

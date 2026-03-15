@@ -43,6 +43,19 @@ RSpec.describe MyCustomProvider do
 end
 ```
 
+## Compliance
+
+Dave::FileSystemProvider passes the full `Dave::FileSystemInterface::ComplianceTests` suite.
+To verify your own provider implementation, include the compliance module in your spec:
+
+    RSpec.describe MyProvider do
+      subject { MyProvider.new }
+      include Dave::FileSystemInterface::ComplianceTests
+    end
+
+See `../docs/PROVIDER-EXAMPLES.md` for a complete in-memory reference implementation
+(`Dave::InMemoryProvider`) that also passes the compliance suite.
+
 ## Tests
 
 ```bash

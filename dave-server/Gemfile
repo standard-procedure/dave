@@ -2,3 +2,4 @@ source "https://rubygems.org"
 gemspec
 
 gem "dave-filesystem", path: "../dave-filesystem"
+gem "dave-security", path: "../dave-security"
