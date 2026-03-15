@@ -4,13 +4,14 @@
 
 ## What is Dave?
 
-Dave is a WebDAV server implemented as a Ruby/Rack gem. It's a mono-repo containing three gems that work together:
+Dave is a **multi-protocol document server** implemented as a Ruby gem mono-repo. It provides both WebDAV (HTTP) and SMB2 (native file sharing) access to the same underlying storage through shared pluggable providers.
 
 | Gem | Module | Purpose |
 |-----|--------|---------|
-| `dave-server` | `Dave::Server` | Core Rack application — parses WebDAV requests, routes to providers, generates responses |
+| `dave-server` | `Dave::Server` | WebDAV Rack application — parses WebDAV requests, routes to providers, generates responses. Also defines shared interfaces (`FileSystemInterface`, `SecurityInterface`, `Resource`, `Principal`). |
 | `dave-filesystem` | `Dave::FileSystemProvider` | Default storage backend — wraps local filesystem |
 | `dave-security` | `Dave::SecurityConfiguration` | Default auth/authz — YAML config with bcrypt passwords and path ACLs |
+| `samba-dave` | `SambaDave::Server` | SMB2 TCP server — binary protocol, NTLM auth, file sharing via native OS clients (Finder, Explorer) |
 
 ## Quick Orientation
 
@@ -20,23 +21,29 @@ dave/
 ├── CLAUDE.md              ← Symlink to this file
 ├── README.md              ← Human-friendly overview
 ├── docs/
-│   ├── WEBDAV-SPEC.md     ← WebDAV RFC 4918 distilled reference (READ THIS FIRST for protocol work)
-│   ├── IMPLEMENTATION-PLAN.md ← How we're building Dave (phases, interfaces, agent workflow)
-│   └── ARCHITECTURE.md    ← System design, gem boundaries, data flow
-├── dave-server/           ← Core Rack app gem
+│   ├── WEBDAV-SPEC.md     ← WebDAV RFC 4918 distilled reference
+│   ├── SMB-SPEC.md        ← SMB2 protocol distilled reference
+│   ├── IMPLEMENTATION-PLAN.md ← WebDAV build plan (phases, interfaces, agent workflow)
+│   ├── SAMBA-DAVE-IMPLEMENTATION-PLAN.md ← SMB build plan (phases, auth, architecture)
+│   └── ARCHITECTURE.md    ← System design, gem boundaries, multi-protocol data flow
+├── dave-server/           ← WebDAV Rack app + shared interface definitions
 │   ├── README.md
 │   ├── docs/
 │   ├── lib/dave/server.rb
 │   └── spec/
-├── dave-filesystem/       ← Default filesystem provider gem
+├── dave-filesystem/       ← Default filesystem provider (shared by WebDAV + SMB)
 │   ├── README.md
 │   ├── docs/
 │   ├── lib/dave/file_system_provider.rb
 │   └── spec/
-└── dave-security/         ← Default security provider gem
+├── dave-security/         ← Default security provider (shared by WebDAV + SMB)
+│   ├── README.md
+│   ├── docs/
+│   ├── lib/dave/security_configuration.rb
+│   └── spec/
+└── samba-dave/            ← SMB2 TCP server
     ├── README.md
-    ├── docs/
-    ├── lib/dave/security_configuration.rb
+    ├── lib/samba_dave/server.rb
     └── spec/
 ```
 
@@ -45,9 +52,12 @@ dave/
 | Task | Read |
 |------|------|
 | Understanding the WebDAV protocol | `docs/WEBDAV-SPEC.md` |
-| Planning work or understanding phases | `docs/IMPLEMENTATION-PLAN.md` |
+| Understanding the SMB2 protocol | `docs/SMB-SPEC.md` |
+| Planning WebDAV work | `docs/IMPLEMENTATION-PLAN.md` |
+| Planning SMB work | `docs/SAMBA-DAVE-IMPLEMENTATION-PLAN.md` |
 | Understanding system design | `docs/ARCHITECTURE.md` |
-| Working on the core server | `dave-server/README.md` + `dave-server/docs/` |
+| Working on the WebDAV server | `dave-server/README.md` + `dave-server/docs/` |
+| Working on the SMB server | `samba-dave/README.md` + `docs/SAMBA-DAVE-IMPLEMENTATION-PLAN.md` |
 | Working on filesystem provider | `dave-filesystem/README.md` + `dave-filesystem/docs/` |
 | Working on security provider | `dave-security/README.md` + `dave-security/docs/` |
 
@@ -73,7 +83,7 @@ bundle exec rake spec
 
 ## Implementation Status
 
-Track progress in `docs/IMPLEMENTATION-PLAN.md` § Development Phases.
+### WebDAV (dave-server) — `docs/IMPLEMENTATION-PLAN.md`
 
 | Phase | Status | Description |
 |-------|--------|-------------|
@@ -84,6 +94,17 @@ Track progress in `docs/IMPLEMENTATION-PLAN.md` § Development Phases.
 | 4 | ✅ | Locking (LOCK, UNLOCK) |
 | 5 | ✅ | Authentication & authorisation |
 | 6 | ✅ | Compliance & hardening |
+
+### SMB (samba-dave) — `docs/SAMBA-DAVE-IMPLEMENTATION-PLAN.md`
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 1 | 🔲 | TCP skeleton + dialect negotiation |
+| 2 | 🔲 | Authentication (NTLM + SPNEGO) |
+| 3 | 🔲 | Tree connect + directory listing |
+| 4 | 🔲 | Read/write file operations |
+| 5 | 🔲 | Client compatibility (Windows/macOS) |
+| 6 | 🔲 | Hardening + SMB 2.1 dialect |
 
 ## Agent Workflow
 

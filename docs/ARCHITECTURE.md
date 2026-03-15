@@ -1,43 +1,53 @@
 # Dave — Architecture
 
-> Overall architecture of the Dave WebDAV mono-repo.
+> Overall architecture of the Dave multi-protocol document server platform.
 
 ---
 
 ## Overview
 
-Dave is a WebDAV server implemented as a collection of Ruby gems, designed to be embedded in any Rack-compatible application.
+Dave is a **multi-protocol document server** implemented as a collection of Ruby gems. It provides both **WebDAV** (HTTP) and **SMB2** (native file sharing) access to the same underlying storage, using a shared pluggable provider architecture.
+
+The key insight: one `FileSystemProvider` implementation serves both protocols. Write an adapter once (e.g., `C8OFileSystemProvider` for your Rails app), and users can access their files via WebDAV (browser, sync clients) or SMB (native OS file manager — Finder, Explorer).
 
 ```
-┌──────────────────────────────────────────────────┐
-│                  Rack Application                 │
-│                  (Rails, Hanami, etc.)            │
-└──────────────────────┬───────────────────────────┘
-                       │
-                       ▼
-┌──────────────────────────────────────────────────┐
-│                  Dave::Server                     │
-│                  (Rack middleware / app)          │
-│                                                  │
-│  ┌─────────┐  ┌──────────┐  ┌─────────────────┐ │
-│  │ Request  │  │  Method  │  │   Response      │ │
-│  │ Parser   │──│  Router  │──│   Builder       │ │
-│  │ (XML)    │  │          │  │   (XML)         │ │
-│  └─────────┘  └────┬─────┘  └─────────────────┘ │
-│                    │                              │
-│         ┌──────────┼──────────┐                   │
-│         ▼          ▼          ▼                   │
-│  ┌────────┐  ┌──────────┐  ┌────────┐           │
-│  │Security│  │FileSystem│  │  Lock  │           │
-│  │Provider│  │ Provider │  │Manager │           │
-│  └────────┘  └──────────┘  └────────┘           │
-└──────────────────────────────────────────────────┘
-         │           │
-         ▼           ▼
-   ┌──────────┐  ┌──────────────┐
-   │YAML/Auth │  │  Local Disk  │
-   │  Config  │  │  (or custom) │
-   └──────────┘  └──────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                    Dave Platform                                │
+│                                                                │
+│  ┌──────────────────────┐        ┌──────────────────────┐      │
+│  │    dave-server         │        │    samba-dave          │      │
+│  │    (Rack/HTTP)         │        │    (TCP/SMB2)          │      │
+│  │    WebDAV Protocol     │        │    SMB2 Protocol       │      │
+│  │    Port 80/443         │        │    Port 445            │      │
+│  │                        │        │                        │      │
+│  │  ┌──────┐ ┌────────┐  │        │  ┌──────┐ ┌────────┐  │      │
+│  │  │ XML  │ │ Method │  │        │  │Binary│ │Command │  │      │
+│  │  │Parser│ │ Router │  │        │  │Parser│ │Dispatch│  │      │
+│  │  └──────┘ └────────┘  │        │  └──────┘ └────────┘  │      │
+│  └──────────┬─────────────┘        └──────────┬─────────────┘      │
+│             │                                  │                   │
+│             └──────────┬───────────────────────┘                   │
+│                        │                                           │
+│              ┌─────────▼──────────┐                                │
+│              │  Shared Providers   │                                │
+│              │                     │                                │
+│              │  ┌──────────────┐   │                                │
+│              │  │ FileSystem   │   │  ← Dave::FileSystemInterface   │
+│              │  │ Provider     │   │    (one adapter, both protocols)│
+│              │  └──────────────┘   │                                │
+│              │  ┌──────────────┐   │                                │
+│              │  │ Security     │   │  ← Dave::SecurityInterface     │
+│              │  │ Provider     │   │                                │
+│              │  └──────────────┘   │                                │
+│              └─────────────────────┘                                │
+└────────────────────────────────────────────────────────────────────┘
+                         │
+                         ▼
+              ┌──────────────────┐
+              │  Storage Backend  │
+              │  (local disk, S3, │
+              │   database, etc.) │
+              └──────────────────┘
 ```
 
 ---
@@ -45,25 +55,36 @@ Dave is a WebDAV server implemented as a collection of Ruby gems, designed to be
 ## Design Principles
 
 ### 1. Dependency Inversion
-Dave::Server depends on **interfaces**, not concrete implementations. FileSystem and Security providers are injected at construction time. This enables:
+Both `Dave::Server` (WebDAV) and `SambaDave::Server` (SMB) depend on **interfaces**, not concrete implementations. FileSystem and Security providers are injected at construction time. This enables:
 - Testing with in-memory fakes
 - Custom backends (S3, database, etc.)
-- Custom auth (OAuth, LDAP, etc.)
+- Custom auth (OAuth, LDAP, app-specific passwords, etc.)
+- **One provider, two protocols** — write once, serve via WebDAV and SMB
 
 ### 2. Single Responsibility
 Each gem has one job:
-- `dave-server` — HTTP/WebDAV protocol handling
-- `dave-filesystem` — storage abstraction
-- `dave-security` — authentication and authorisation
+- `dave-server` — HTTP/WebDAV protocol handling + shared interface definitions
+- `dave-filesystem` — default local filesystem storage backend
+- `dave-security` — default YAML-based authentication and authorisation
+- `samba-dave` — SMB2 protocol handling (TCP server, binary wire format)
 
 ### 3. No Global State
-All state is scoped to the `Dave::Server` instance. Multiple server instances with different configurations can coexist in the same process.
+All state is scoped to the server instance. Multiple server instances (even mixing WebDAV and SMB) with different configurations can coexist in the same process.
 
 ### 4. Thread Safety
-The server may be used in threaded environments (Puma, etc.). All shared state (lock manager) uses proper synchronisation. Providers must be thread-safe.
+Both servers may run in threaded environments. All shared state uses proper synchronisation:
+- `Dave::Server` — lock manager uses mutex
+- `SambaDave::Server` — thread-per-connection, shared open file tracking protected by mutex
+- Providers must be thread-safe.
 
 ### 5. Streaming
-Large files are streamed, not buffered in memory. The filesystem provider returns IO objects; the server passes them directly to Rack.
+Large files are streamed, not buffered in memory. The filesystem provider returns IO objects; both servers pass them directly to their transport layer.
+
+### 6. Protocol Isolation
+All protocol-specific knowledge is contained within each server gem:
+- `dave-server` knows about XML, HTTP methods, WebDAV headers — but nothing about SMB
+- `samba-dave` knows about binary wire format, NTLM, SMB2 commands — but nothing about HTTP
+- Providers know nothing about either protocol
 
 ---
 
@@ -114,21 +135,24 @@ Incoming Rack Request
 **Depends on:** Rack, Nokogiri
 
 **Defines:**
-- `Dave::Server` — the Rack application
-- `Dave::FileSystemProvider` — interface module (contract)
-- `Dave::SecurityProvider` — interface module (contract)
+- `Dave::Server` — the Rack application (WebDAV)
+- `Dave::FileSystemInterface` — interface module (contract) — **shared with samba-dave**
+- `Dave::SecurityInterface` — interface module (contract) — **shared with samba-dave**
+- `Dave::Resource` — value object for file/collection metadata — **shared with samba-dave**
+- `Dave::Principal` — authenticated user value object — **shared with samba-dave**
 - `Dave::LockManager` — in-memory lock management
 - `Dave::XmlRequest` — parses PROPFIND/PROPPATCH/LOCK request bodies
 - `Dave::XmlResponse` — builds multistatus/propstat/lockdiscovery responses
-- `Dave::Principal` — authenticated user value object
 - Method handlers: one class per WebDAV method
 - Error classes: `Dave::Error`, `Dave::NotFoundError`, etc.
-- Compliance test modules for providers
+- `Dave::FileSystemInterface::ComplianceTests` — provider verification
+- `Dave::SecurityInterface::ComplianceTests` — provider verification
 
 **Does NOT contain:**
 - Concrete filesystem implementation
 - Concrete security implementation
 - Framework-specific code
+- Any SMB/binary protocol knowledge
 
 ### dave-filesystem
 
@@ -151,6 +175,29 @@ Dead properties need persistent storage alongside files. Options considered:
 | Extended attributes (xattr) | No extra files, native | OS-dependent, size limits, not all FS support |
 
 **Choice: Sidecar directory.** Simplest, works everywhere, no external dependencies. JSON files named by SHA256 of the resource path.
+
+### samba-dave
+
+**Depends on:** dave-server (for interface definitions, Resource, Principal, errors), rubyntlm, bindata
+
+**Defines:**
+- `SambaDave::Server` — TCP server on port 445 (SMB2 protocol)
+- `SambaDave::Connection` — per-connection state machine
+- `SambaDave::Session` — authenticated session state
+- `SambaDave::TreeConnect` — mounted share state
+- `SambaDave::OpenFile` — file handle tracking (FileId → path + state)
+- `SambaDave::Authenticator` — NTLM challenge-response using app-specific passwords
+- `SambaDave::Protocol::Header` — SMB2 header (BinData)
+- `SambaDave::Protocol::Transport` — TCP framing (4-byte NetBIOS prefix)
+- `SambaDave::Protocol::Commands::*` — one handler per SMB2 command
+- `SambaDave::NTLM::*` — SPNEGO wrapping, challenge generation/validation
+- `SambaDave::ComplianceTests` — SMB-specific provider verification
+
+**Does NOT contain:**
+- Concrete filesystem implementation
+- Concrete security implementation
+- Any HTTP/WebDAV/XML knowledge
+- Active Directory or Kerberos integration
 
 ### dave-security
 
@@ -264,6 +311,91 @@ builder.to_xml
 
 ---
 
+## SMB Server Architecture (samba-dave)
+
+### Connection Model
+
+Unlike dave-server (which is a Rack middleware in someone else's HTTP server), samba-dave runs its own TCP server:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  SambaDave::Server                       │
+│                                                         │
+│  TCPServer (port 445)                                   │
+│  @server_guid: 16 bytes                                 │
+│  @filesystem: Dave::FileSystemInterface                 │
+│  @security: Dave::SecurityInterface (optional)          │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │  Connection (Thread per client)                  │    │
+│  │                                                  │    │
+│  │  State: INITIAL → NEGOTIATED → AUTHENTICATED     │    │
+│  │                → CONNECTED (tree connected)      │    │
+│  │                                                  │    │
+│  │  ┌───────────┐   ┌────────────┐                  │    │
+│  │  │ Session   │   │ TreeConnect │                  │    │
+│  │  │ (per user)│──▶│ (per share) │                  │    │
+│  │  └───────────┘   └─────┬──────┘                  │    │
+│  │                        │                          │    │
+│  │                  ┌─────▼──────┐                   │    │
+│  │                  │  OpenFile   │                   │    │
+│  │                  │  (per file) │                   │    │
+│  │                  │  FileId → path + state          │    │
+│  │                  └────────────┘                   │    │
+│  └──────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Authentication: App-Specific Passwords
+
+samba-dave uses **app-generated credentials** rather than Active Directory:
+
+1. Host application generates per-user SMB credentials (UUID username + random password)
+2. User enters once when mounting; OS saves in keychain
+3. NTLM is just the **wire format** — server validates using known plaintext password
+4. No AD, no Kerberos, no domain controller
+
+This is the same pattern as Gmail's "app passwords" for IMAP.
+
+### SMB2 Request Processing
+
+```
+TCP Data Received
+        │
+        ▼
+┌──────────────────┐
+│ 1. Transport      │  Read 4-byte NetBIOS length prefix + message body
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ 2. Header Parse   │  Unpack 64-byte SMB2 header (BinData)
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ 3. Session Check  │  Validate SessionId (except NEGOTIATE/SESSION_SETUP)
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ 4. Tree Check     │  Validate TreeId (for file operations)
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ 5. Command        │  Dispatch to handler based on Command code
+│    Dispatch       │  Handler uses FileSystemProvider
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ 6. Response       │  Build response header + payload, frame, send
+└──────────────────┘
+```
+
+---
+
 ## Testing Strategy
 
 ### Unit Tests (per gem)
@@ -271,21 +403,29 @@ builder.to_xml
 - Mock providers for server tests
 - Fast, isolated, no I/O
 
-### Integration Tests (dave-server)
+### Integration Tests
+
+**dave-server (WebDAV):**
 - Use Rack::Test to send HTTP requests
 - Wire up real (or in-memory) providers
 - Test full request/response cycle
 - Verify XML responses with Nokogiri assertions
 
+**samba-dave (SMB):**
+- Use `smbclient` CLI for integration tests
+- Binary packet fixtures captured from Wireshark
+- Test full connection lifecycle (negotiate → auth → tree → ops → disconnect)
+
 ### Compliance Tests (provider gems)
 - Shared example groups included by implementers
+- `Dave::FileSystemInterface::ComplianceTests` — verifies WebDAV operations
+- `SambaDave::ComplianceTests` — verifies SMB-relevant operations
 - Test the contract, not the implementation
-- Any passing provider works with Dave::Server
+- Any passing provider works with **both** Dave::Server and SambaDave::Server
 
-### End-to-End Tests (Phase 6)
-- litmus test suite (external WebDAV test tool)
-- Real client testing (Finder, Explorer, Cyberduck)
-- curl-based smoke tests
+### End-to-End Tests
+- **WebDAV:** litmus test suite, real client testing (Finder, Explorer, Cyberduck)
+- **SMB:** smbclient CLI tests, mount from Windows Explorer, mount from macOS Finder
 
 ### Test Organisation
 
@@ -325,5 +465,27 @@ dave-security/
       security_configuration_spec.rb
     compliance/
       provider_compliance_spec.rb
+    spec_helper.rb
+
+samba-dave/
+  spec/
+    samba_dave/
+      server_spec.rb
+      connection_spec.rb
+      authenticator_spec.rb
+      protocol/
+        header_spec.rb
+        transport_spec.rb
+        commands/
+          negotiate_spec.rb
+          session_setup_spec.rb
+          create_spec.rb
+          read_spec.rb
+          write_spec.rb
+          query_info_spec.rb
+          query_directory_spec.rb
+    integration/
+      mount_spec.rb
+      file_operations_spec.rb
     spec_helper.rb
 ```
