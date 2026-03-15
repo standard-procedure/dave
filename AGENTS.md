@@ -78,12 +78,12 @@ Track progress in `docs/IMPLEMENTATION-PLAN.md` § Development Phases.
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 0 | 🚧 | Project skeleton |
-| 1 | ⬜ | Core read/write (GET, PUT, DELETE, MKCOL, HEAD) |
-| 2 | ⬜ | Properties (PROPFIND, PROPPATCH) |
-| 3 | ⬜ | Namespace ops (COPY, MOVE) |
-| 4 | ⬜ | Locking (LOCK, UNLOCK) |
-| 5 | ⬜ | Authentication & authorisation |
-| 6 | ⬜ | Compliance & hardening |
+| 1 | ✅ | Core read/write (GET, PUT, DELETE, MKCOL, HEAD) |
+| 2 | ✅ | Properties (PROPFIND, PROPPATCH) |
+| 3 | ✅ | Namespace ops (COPY, MOVE) |
+| 4 | ✅ | Locking (LOCK, UNLOCK) |
+| 5 | ✅ | Authentication & authorisation |
+| 6 | ✅ | Compliance & hardening |
 
 ## Agent Workflow
 

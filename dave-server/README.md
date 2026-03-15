@@ -46,6 +46,36 @@ This gem defines the interfaces that providers must implement:
 - `Dave::FileSystemProvider` — storage operations (see `docs/IMPLEMENTATION-PLAN.md`)
 - `Dave::SecurityProvider` — auth/authz operations
 
+## Compliance Test Suites
+
+Dave ships two compliance test modules that provider implementers use to verify their implementations.
+
+### FileSystemInterface::ComplianceTests
+
+Include in your provider spec to verify all interface methods work correctly:
+
+    RSpec.describe MyCustomProvider do
+      subject { MyCustomProvider.new }
+      include Dave::FileSystemInterface::ComplianceTests
+    end
+
+See `docs/PROVIDER-EXAMPLES.md` for a complete reference implementation.
+
+### SecurityInterface::ComplianceTests
+
+Include in your security provider spec:
+
+    RSpec.describe MySecurityProvider do
+      subject { MySecurityProvider.new }
+      let(:valid_credentials) { { username: "alice", password: "secret" } }
+      let(:read_only_credentials) { { username: "bob", password: "hunter2" } }
+      let(:invalid_credentials) { { username: "alice", password: "wrong" } }
+      let(:read_write_path) { "/" }
+      let(:read_only_path) { "/shared/" }
+      let(:restricted_path) { "/private/" }
+      include Dave::SecurityInterface::ComplianceTests
+    end
+
 ## Tests
 
 ```bash

@@ -75,6 +75,22 @@ To build your own security provider (e.g., LDAP, OAuth, database):
 2. Include `Dave::SecurityProvider::ComplianceTests` in your RSpec suite
 3. Pass your provider to `Dave::Server.new(security: your_provider)`
 
+## Compliance
+
+Dave::SecurityConfiguration passes the full `Dave::SecurityInterface::ComplianceTests` suite.
+To verify your own security provider, include the compliance module in your spec:
+
+    RSpec.describe MySecurityProvider do
+      subject { MySecurityProvider.new }
+      let(:valid_credentials) { { username: "alice", password: "secret" } }
+      let(:read_only_credentials) { { username: "bob", password: "hunter2" } }
+      let(:invalid_credentials) { { username: "alice", password: "wrong" } }
+      let(:read_write_path) { "/" }
+      let(:read_only_path) { "/shared/" }
+      let(:restricted_path) { "/private/" }
+      include Dave::SecurityInterface::ComplianceTests
+    end
+
 ## Tests
 
 ```bash
