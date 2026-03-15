@@ -4,6 +4,12 @@ PATH
     dave-filesystem (0.1.0)
 
 PATH
+  remote: ../dave-security
+  specs:
+    dave-security (0.1.0)
+      bcrypt
+
+PATH
   remote: .
   specs:
     dave-server (0.1.0)
@@ -15,6 +21,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     base64 (0.3.0)
+    bcrypt (3.1.21)
     diff-lcs (1.6.2)
     docile (1.4.1)
     nokogiri (1.19.1-aarch64-linux-gnu)
@@ -69,6 +76,7 @@ PLATFORMS
 
 DEPENDENCIES
   dave-filesystem!
+  dave-security!
   dave-server!
   rack-test
   rspec (~> 3.0)
@@ -76,7 +84,9 @@ DEPENDENCIES
 
 CHECKSUMS
   base64 (0.3.0) sha256=27337aeabad6ffae05c265c450490628ef3ebd4b67be58257393227588f5a97b
+  bcrypt (3.1.21) sha256=5964613d750a42c7ee5dc61f7b9336fb6caca429ba4ac9f2011609946e4a2dcf
   dave-filesystem (0.1.0)
+  dave-security (0.1.0)
   dave-server (0.1.0)
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
   docile (1.4.1) sha256=96159be799bfa73cdb721b840e9802126e4e03dfc26863db73647204c727f21e
