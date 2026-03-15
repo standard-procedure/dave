@@ -46,6 +46,7 @@ module Dave
             subject.write_content("/io.txt", StringIO.new("io test"))
             io = subject.read_content("/io.txt")
             expect(io).to respond_to(:read)
+            expect(io).to respond_to(:each)
           end
 
           it "write_content returns a quoted ETag string" do
@@ -84,6 +85,10 @@ module Dave
             expect(subject.get_resource("/deleteme.txt")).to be_nil
           end
 
+          it "raises NotFoundError when deleting non-existent resource" do
+            expect { subject.delete("/nonexistent.txt") }.to raise_error(Dave::NotFoundError)
+          end
+
           it "delete returns an empty array on success (file)" do
             subject.write_content("/deleteme2.txt", StringIO.new("bye"))
             result = subject.delete("/deleteme2.txt")
@@ -111,6 +116,19 @@ module Dave
             expect(subject.get_resource("/src.txt")).not_to be_nil
           end
 
+          it "copy returns :created when destination is new" do
+            subject.write_content("/copy-new-src.txt", StringIO.new("x"))
+            result = subject.copy("/copy-new-src.txt", "/copy-new-dst.txt")
+            expect(result).to eq(:created)
+          end
+
+          it "copy returns :no_content when destination is overwritten" do
+            subject.write_content("/copy-ow-src.txt", StringIO.new("x"))
+            subject.write_content("/copy-ow-dst.txt", StringIO.new("y"))
+            result = subject.copy("/copy-ow-src.txt", "/copy-ow-dst.txt", overwrite: true)
+            expect(result).to eq(:no_content)
+          end
+
           it "raises AlreadyExistsError on copy with overwrite: false when destination exists" do
             subject.write_content("/copy-src.txt", StringIO.new("x"))
             subject.write_content("/copy-dst.txt", StringIO.new("y"))
@@ -123,6 +141,19 @@ module Dave
             subject.move("/old.txt", "/new.txt")
             expect(subject.get_resource("/old.txt")).to be_nil
             expect(subject.read_content("/new.txt").read).to eq("move me")
+          end
+
+          it "move returns :created when destination is new" do
+            subject.write_content("/move-new-src.txt", StringIO.new("x"))
+            result = subject.move("/move-new-src.txt", "/move-new-dst.txt")
+            expect(result).to eq(:created)
+          end
+
+          it "move returns :no_content when destination is overwritten" do
+            subject.write_content("/move-ow-src.txt", StringIO.new("x"))
+            subject.write_content("/move-ow-dst.txt", StringIO.new("y"))
+            result = subject.move("/move-ow-src.txt", "/move-ow-dst.txt", overwrite: true)
+            expect(result).to eq(:no_content)
           end
 
           it "source is gone after move" do
