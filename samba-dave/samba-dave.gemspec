@@ -7,7 +7,7 @@ Gem::Specification.new do |spec|
                         "One FileSystemProvider implementation serves both protocols."
   spec.require_paths = ["lib"]
   spec.files         = Dir["lib/**/*.rb"]
-  spec.required_ruby_version = ">= 4.0"
+  spec.required_ruby_version = ">= 3.2"
 
   spec.add_dependency "dave-server"          # Shared interfaces: FileSystemInterface, SecurityInterface, Resource, Principal
   spec.add_dependency "rubyntlm", "~> 0.6"  # NTLM Type 1/2/3 message handling

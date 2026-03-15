@@ -2,6 +2,7 @@
 
 require "socket"
 require "securerandom"
+require "samba_dave/connection"
 
 module SambaDave
   # SMB2 file server that uses Dave::FileSystemInterface providers.
@@ -29,19 +30,21 @@ module SambaDave
   class Server
     VERSION = "0.1.0"
 
-    attr_reader :server_guid, :share_name, :port
+    attr_reader :server_guid, :share_name, :port, :filesystem
 
     # @param filesystem [Dave::FileSystemInterface] file operations provider
     # @param security [Dave::SecurityInterface, nil] authentication provider (nil = no auth)
     # @param share_name [String] name of the SMB share
     # @param port [Integer] TCP port to listen on (445 = standard, 4450 = development)
     def initialize(filesystem:, share_name: "share", security: nil, port: 445)
-      @filesystem = filesystem
-      @security = security
-      @share_name = share_name
-      @port = port
+      @filesystem  = filesystem
+      @security    = security
+      @share_name  = share_name
+      @port        = port
       @server_guid = SecureRandom.bytes(16)
-      @running = false
+      @running     = false
+      @connections = {}
+      @connections_mutex = Mutex.new
     end
 
     # Start the server (blocking).
@@ -49,20 +52,20 @@ module SambaDave
     def start
       raise "Server already running" if @running
 
-      @running = true
+      @running    = true
       @tcp_server = TCPServer.new("0.0.0.0", @port)
 
       while @running
         begin
           client = @tcp_server.accept
           Thread.new(client) { |sock| handle_connection(sock) }
-        rescue IOError
-          break unless @running
+        rescue IOError, Errno::EBADF, Errno::EINVAL
+          break
         end
       end
     end
 
-    # Stop the server.
+    # Stop the server and close all active connections.
     def stop
       @running = false
       @tcp_server&.close
@@ -71,10 +74,11 @@ module SambaDave
     private
 
     def handle_connection(socket)
-      # TODO: Phase 1 — create Connection, run message loop
-      socket.close
-    rescue => e
-      # TODO: logging
+      connection = Connection.new(socket, self)
+      @connections_mutex.synchronize { @connections[connection.id] = connection }
+      connection.run  # blocking — reads messages until disconnect
+    ensure
+      @connections_mutex.synchronize { @connections.delete(connection&.id) }
       socket.close rescue nil
     end
   end

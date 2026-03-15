@@ -5,7 +5,7 @@ Gem::Specification.new do |spec|
   spec.summary       = "WebDAV server as a Rack application"
   spec.require_paths = ["lib"]
   spec.files         = Dir["lib/**/*.rb"]
-  spec.required_ruby_version = ">= 4.0"
+  spec.required_ruby_version = ">= 3.2"
 
   spec.add_dependency "rack", ">= 2.0"
   spec.add_dependency "nokogiri"

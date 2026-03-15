@@ -5,7 +5,7 @@ Gem::Specification.new do |spec|
   spec.summary       = "Filesystem provider for Dave WebDAV server"
   spec.require_paths = ["lib"]
   spec.files         = Dir["lib/**/*.rb"]
-  spec.required_ruby_version = ">= 4.0"
+  spec.required_ruby_version = ">= 3.2"
 
   spec.add_development_dependency "rspec", "~> 3.0"
   spec.add_development_dependency "simplecov"
