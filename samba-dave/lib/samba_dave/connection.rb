@@ -18,6 +18,9 @@ require "samba_dave/protocol/commands/write"
 require "samba_dave/protocol/commands/flush"
 require "samba_dave/protocol/commands/cancel"
 require "samba_dave/protocol/commands/set_info"
+require "samba_dave/protocol/commands/ioctl"
+require "samba_dave/protocol/commands/lock"
+require "samba_dave/protocol/commands/change_notify"
 require "samba_dave/authenticator"
 require "samba_dave/session"
 require "samba_dave/tree_connect"
@@ -106,7 +109,12 @@ module SambaDave
         return
       end
 
-      response_result = dispatch(request_header, raw[64..] || "")
+      response_result = begin
+        dispatch(request_header, raw[64..] || "")
+      rescue => e
+        # Truncated/malformed body: return INVALID_PARAMETER rather than crashing
+        { status: C::Status::INVALID_PARAMETER, body: "" }
+      end
 
       # CANCEL (and future async ops) signal that no response should be sent.
       return if response_result[:skip_response]
@@ -140,6 +148,13 @@ module SambaDave
         return handle_session_setup(body, session_id)
       when C::Commands::LOGOFF
         return handle_logoff(body, session_id)
+      end
+
+      # Return NOT_IMPLEMENTED for completely unknown command codes before
+      # applying session authentication checks. This matches the SMB2 spec:
+      # unrecognized commands are rejected regardless of session state.
+      unless known_command?(command)
+        return { status: C::Status::NOT_IMPLEMENTED, body: "" }
       end
 
       # All other commands require an authenticated session
@@ -179,9 +194,17 @@ module SambaDave
         return handle_cancel(body)
       when C::Commands::SET_INFO
         return handle_set_info(body)
+
+      # Phase 5 commands
+      when C::Commands::IOCTL
+        return handle_ioctl(body)
+      when C::Commands::LOCK
+        return handle_lock(body)
+      when C::Commands::CHANGE_NOTIFY
+        return handle_change_notify(body)
       end
 
-      # Unimplemented commands (future phases)
+      # Known but not-yet-dispatched commands (shouldn't reach here)
       { status: C::Status::NOT_IMPLEMENTED, body: "" }
     end
 
@@ -331,6 +354,30 @@ module SambaDave
         body,
         open_file_table: @open_file_table
       )
+    end
+
+    # Handle SMB2 IOCTL (Phase 5)
+    def handle_ioctl(body)
+      Protocol::Commands::Ioctl.handle(
+        body,
+        server_guid: @server.server_guid
+      )
+    end
+
+    # Handle SMB2 LOCK (Phase 5 stub)
+    def handle_lock(body)
+      Protocol::Commands::Lock.handle(body)
+    end
+
+    # Handle SMB2 CHANGE_NOTIFY (Phase 5 stub)
+    def handle_change_notify(body)
+      Protocol::Commands::ChangeNotify.handle(body)
+    end
+
+    # Returns true if the command code is a recognized SMB2 command.
+    # Unrecognized command codes get STATUS_NOT_IMPLEMENTED before session check.
+    def known_command?(command)
+      command <= C::Commands::OPLOCK_BREAK
     end
 
     # Handle an SMB1 COM_NEGOTIATE packet

@@ -11,8 +11,9 @@ RSpec.describe SambaDave::Protocol::Commands::QueryDirectory do
   C = SambaDave::Protocol::Constants
 
   # FileInformationClass for QUERY_DIRECTORY
-  FILE_ID_BOTH_DIR_INFO = 0x25
-  FILE_BOTH_DIR_INFO    = 0x03
+  FILE_ID_BOTH_DIR_INFO  = 0x25
+  FILE_BOTH_DIR_INFO     = 0x03
+  FILE_ID_FULL_DIR_INFO  = 0x26  # Windows Explorer uses this
 
   # Flags
   FLAG_RESTART_SCANS   = 0x01
@@ -202,6 +203,65 @@ RSpec.describe SambaDave::Protocol::Commands::QueryDirectory do
     end
   end
 
+  # ── Windows Explorer compatibility ────────────────────────────────────────
+
+  describe ".handle — FileIdFullDirectoryInformation (0x26)" do
+    it "returns STATUS_SUCCESS" do
+      of = make_dir_handle
+      allow(filesystem).to receive(:list_children).and_return(children)
+      result = described_class.handle(
+        build_query_dir_body(file_id_bytes: of.file_id_bytes, info_class: FILE_ID_FULL_DIR_INFO),
+        open_file_table: open_file_table
+      )
+      expect(result[:status]).to eq(C::Status::SUCCESS)
+    end
+
+    it "returns a non-empty buffer with file entries" do
+      of = make_dir_handle
+      allow(filesystem).to receive(:list_children).and_return(children)
+      result = described_class.handle(
+        build_query_dir_body(file_id_bytes: of.file_id_bytes, info_class: FILE_ID_FULL_DIR_INFO),
+        open_file_table: open_file_table
+      )
+      resp = SambaDave::Protocol::Commands::QueryDirectoryResponse.read(result[:body])
+      expect(resp.output_buffer_length).to be > 0
+    end
+
+    it "includes . and .. entries" do
+      of = make_dir_handle
+      allow(filesystem).to receive(:list_children).and_return([])
+      result  = described_class.handle(
+        build_query_dir_body(file_id_bytes: of.file_id_bytes, info_class: FILE_ID_FULL_DIR_INFO),
+        open_file_table: open_file_table
+      )
+      entries = parse_full_dir_entries(result[:body])
+      names   = entries.map { |e| e[:name] }
+      expect(names).to include(".")
+      expect(names).to include("..")
+    end
+
+    it "includes child file entries with correct names" do
+      of = make_dir_handle
+      allow(filesystem).to receive(:list_children).and_return([file1_resource])
+      result  = described_class.handle(
+        build_query_dir_body(file_id_bytes: of.file_id_bytes, info_class: FILE_ID_FULL_DIR_INFO),
+        open_file_table: open_file_table
+      )
+      entries = parse_full_dir_entries(result[:body])
+      names   = entries.map { |e| e[:name] }
+      expect(names).to include("a.txt")
+    end
+
+    it "returns STATUS_NO_MORE_FILES on exhaustion" do
+      of = make_dir_handle
+      allow(filesystem).to receive(:list_children).and_return([])
+      body = build_query_dir_body(file_id_bytes: of.file_id_bytes, info_class: FILE_ID_FULL_DIR_INFO)
+      described_class.handle(body, open_file_table: open_file_table)
+      result = described_class.handle(body, open_file_table: open_file_table)
+      expect(result[:status]).to eq(C::Status::NO_MORE_FILES)
+    end
+  end
+
   # ── Helper: parse FileIdBothDirectoryInformation entries from response buffer ─
 
   def parse_dir_entries(response_body)
@@ -228,6 +288,39 @@ RSpec.describe SambaDave::Protocol::Commands::QueryDirectory do
       name_bytes = buf[offset + 104, name_length]
       name       = name_bytes.force_encoding("UTF-16LE").encode("UTF-8", invalid: :replace, undef: :replace)
 
+      entries << { name: name, name_length: name_length }
+
+      break if next_offset == 0
+      offset += next_offset
+    end
+
+    entries
+  end
+
+  # Helper: parse FileIdFullDirectoryInformation entries from response buffer.
+  # Fixed portion = 80 bytes (no short name fields).
+  # NextEntryOffset(4) FileIndex(4) CreationTime(8) LastAccessTime(8)
+  # LastWriteTime(8) ChangeTime(8) EndOfFile(8) AllocationSize(8)
+  # FileAttributes(4) FileNameLength(4) EaSize(4) Reserved(4) FileId(8)
+  # FileName(FileNameLength)
+  def parse_full_dir_entries(response_body)
+    resp   = SambaDave::Protocol::Commands::QueryDirectoryResponse.read(response_body)
+    buf    = resp.output_buffer
+    offset = 0
+    entries = []
+
+    loop do
+      break if offset >= buf.bytesize
+      fixed = buf[offset, 80]
+      break if fixed.nil? || fixed.bytesize < 80
+
+      next_offset, _file_index,
+      _creation, _last_access, _last_write, _change,
+      _end_of_file, _alloc_size,
+      _attrs, name_length = fixed.unpack("L<L<Q<Q<Q<Q<Q<Q<L<L<")
+
+      name_bytes = buf[offset + 80, name_length]
+      name       = name_bytes.force_encoding("UTF-16LE").encode("UTF-8", invalid: :replace, undef: :replace)
       entries << { name: name, name_length: name_length }
 
       break if next_offset == 0

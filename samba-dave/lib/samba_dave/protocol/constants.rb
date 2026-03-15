@@ -56,6 +56,7 @@ module SambaDave
         USER_SESSION_DELETED      = 0xC0000203
         END_OF_FILE               = 0xC0000011
         CANCELLED                 = 0xC0000120
+        NOT_A_REPARSE_POINT       = 0xC0000275
       end
 
       # Header flags (32-bit bitmask at offset 16)

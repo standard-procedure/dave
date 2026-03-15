@@ -303,4 +303,64 @@ RSpec.describe SambaDave::Protocol::Commands::Create do
       expect(result[:status]).to eq(C::Status::SUCCESS)
     end
   end
+
+  # ── macOS Finder compatibility ─────────────────────────────────────────────
+  # macOS Finder probes for resource forks (._filename) and .DS_Store before
+  # doing any useful work. These must be intercepted and return
+  # STATUS_OBJECT_NAME_NOT_FOUND to avoid spurious error dialogs.
+
+  context "macOS Finder probes" do
+    let(:filesystem) do
+      double("FileSystemProvider")
+    end
+    let(:tree_connect) do
+      SambaDave::TreeConnect.new(tree_id: 1, share_name: "share", filesystem: filesystem)
+    end
+
+    describe "resource fork probe (._filename)" do
+      it "returns STATUS_OBJECT_NAME_NOT_FOUND for ._readme.txt" do
+        body   = build_create_body(name: "._readme.txt", create_disposition: CREATE_DISPOSITION_OPEN)
+        result = described_class.handle(body, tree_connect: tree_connect, open_file_table: open_file_table)
+        expect(result[:status]).to eq(C::Status::OBJECT_NAME_NOT_FOUND)
+      end
+
+      it "returns STATUS_OBJECT_NAME_NOT_FOUND for ._somedir/._file" do
+        body   = build_create_body(name: "._somefile", create_disposition: CREATE_DISPOSITION_OPEN)
+        result = described_class.handle(body, tree_connect: tree_connect, open_file_table: open_file_table)
+        expect(result[:status]).to eq(C::Status::OBJECT_NAME_NOT_FOUND)
+      end
+
+      it "does not call the filesystem provider for resource fork paths" do
+        expect(filesystem).not_to receive(:get_resource)
+        body = build_create_body(name: "._document.pdf", create_disposition: CREATE_DISPOSITION_OPEN)
+        described_class.handle(body, tree_connect: tree_connect, open_file_table: open_file_table)
+      end
+
+      it "returns STATUS_OBJECT_NAME_NOT_FOUND for CREATE disposition too" do
+        body   = build_create_body(name: "._newfile.txt", create_disposition: CREATE_DISPOSITION_CREATE)
+        result = described_class.handle(body, tree_connect: tree_connect, open_file_table: open_file_table)
+        expect(result[:status]).to eq(C::Status::OBJECT_NAME_NOT_FOUND)
+      end
+    end
+
+    describe ".DS_Store probe" do
+      it "returns STATUS_OBJECT_NAME_NOT_FOUND for .DS_Store" do
+        body   = build_create_body(name: ".DS_Store", create_disposition: CREATE_DISPOSITION_OPEN)
+        result = described_class.handle(body, tree_connect: tree_connect, open_file_table: open_file_table)
+        expect(result[:status]).to eq(C::Status::OBJECT_NAME_NOT_FOUND)
+      end
+
+      it "returns STATUS_OBJECT_NAME_NOT_FOUND for subdirectory/.DS_Store" do
+        body   = build_create_body(name: "subdir\\.DS_Store", create_disposition: CREATE_DISPOSITION_OPEN)
+        result = described_class.handle(body, tree_connect: tree_connect, open_file_table: open_file_table)
+        expect(result[:status]).to eq(C::Status::OBJECT_NAME_NOT_FOUND)
+      end
+
+      it "does not call the filesystem provider for .DS_Store" do
+        expect(filesystem).not_to receive(:get_resource)
+        body = build_create_body(name: ".DS_Store", create_disposition: CREATE_DISPOSITION_OPEN)
+        described_class.handle(body, tree_connect: tree_connect, open_file_table: open_file_table)
+      end
+    end
+  end
 end

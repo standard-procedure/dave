@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "bindata"
+require "digest"
 require "samba_dave/protocol/constants"
 
 module SambaDave
@@ -70,12 +71,14 @@ module SambaDave
         INFO_TYPE_QUOTA      = 0x04
 
         # FileInformationClass (InfoType=FILE) constants
-        FILE_BASIC_INFO        = 0x04  # timestamps + attributes
-        FILE_STANDARD_INFO     = 0x05  # size + directory flag
-        FILE_INTERNAL_INFO     = 0x06  # index number
-        FILE_EA_INFO           = 0x07  # EA size
-        FILE_ALL_INFO          = 0x12  # combination
-        FILE_NETWORK_OPEN_INFO = 0x22  # combined timestamps + sizes
+        FILE_BASIC_INFO             = 0x04  # timestamps + attributes
+        FILE_STANDARD_INFO          = 0x05  # size + directory flag
+        FILE_INTERNAL_INFO          = 0x06  # index number (inode-like)
+        FILE_EA_INFO                = 0x07  # EA size
+        FILE_ALL_INFO               = 0x12  # combination
+        FILE_NETWORK_OPEN_INFO      = 0x22  # combined timestamps + sizes
+        FILE_ATTRIBUTE_TAG_INFO     = 0x23  # FileAttributes + ReparseTag
+        FILE_NORMALIZED_NAME_INFO   = 0x30  # Normalized path (not supported)
 
         # FsInformationClass (InfoType=FILESYSTEM) constants
         FS_VOLUME_INFO    = 0x01  # volume label + serial
@@ -93,6 +96,11 @@ module SambaDave
           open_file     = open_file_table.get(file_id_bytes)
 
           return { status: Constants::Status::INVALID_HANDLE, body: "" } unless open_file
+
+          # macOS Finder compatibility: resource forks and metadata never exist
+          if macos_probe_path?(open_file.path)
+            return { status: Constants::Status::OBJECT_NAME_NOT_FOUND, body: "" }
+          end
 
           case request.info_type
           when INFO_TYPE_FILE
@@ -125,8 +133,10 @@ module SambaDave
             build_response([0].pack("L<"))
 
           when FILE_INTERNAL_INFO
-            # Index number (inode-like) — use 0 for our provider
-            build_response([0].pack("Q<"))
+            # FileInternalInformation — stable 64-bit index derived from path.
+            # Use the first 8 bytes of SHA-256(path) as a deterministic inode-like value.
+            index = Digest::SHA256.digest(open_file.path)[0, 8].unpack1("Q<")
+            build_response([index].pack("Q<"))
 
           when FILE_ALL_INFO
             # Combination of multiple info classes — return basic + standard + network-open
@@ -135,6 +145,17 @@ module SambaDave
             # FILE_ALL_INFO is complex; return a simplified version
             buf = basic + standard + [0].pack("Q<")  # + EA size
             build_response(buf)
+
+          when FILE_ATTRIBUTE_TAG_INFO
+            # FileAttributeTagInformation — FileAttributes(4) + ReparseTag(4)
+            # We never create reparse points, so ReparseTag is always 0.
+            attrs = resource.collection? ? Constants::FileAttributes::DIRECTORY : Constants::FileAttributes::ARCHIVE
+            build_response([attrs, 0].pack("L<L<"))
+
+          when FILE_NORMALIZED_NAME_INFO
+            # FileNormalizedNameInformation — not supported. Return INVALID_INFO_CLASS
+            # so Windows falls back to using the path it already knows.
+            { status: Constants::Status::INVALID_INFO_CLASS, body: "" }
 
           else
             { status: Constants::Status::INVALID_INFO_CLASS, body: "" }
@@ -249,10 +270,16 @@ module SambaDave
           (time.to_i * 10_000_000) + (time.nsec / 100) + Constants::FILETIME_EPOCH_DIFF
         end
 
+        # Returns true if the path is a macOS Finder resource fork or metadata file.
+        def self.macos_probe_path?(path)
+          base = File.basename(path.to_s)
+          base.start_with?("._") || base == ".DS_Store"
+        end
+
         private_class_method :handle_file_info, :handle_fs_info,
                              :file_basic_info, :file_standard_info, :file_network_open_info,
                              :fs_volume_info, :fs_size_info, :fs_attribute_info, :fs_full_size_info,
-                             :build_response, :time_to_filetime
+                             :build_response, :time_to_filetime, :macos_probe_path?
       end
     end
   end

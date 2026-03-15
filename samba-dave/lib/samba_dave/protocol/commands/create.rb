@@ -137,6 +137,10 @@ module SambaDave
           smb_name = extract_name(body, request)
           fs_path  = smb_path_to_fs_path(smb_name)
 
+          # macOS Finder compatibility: intercept resource fork and metadata probes
+          # before hitting the provider. These paths never exist on our server.
+          return { status: Constants::Status::OBJECT_NAME_NOT_FOUND, body: "" } if macos_probe_path?(fs_path)
+
           filesystem = tree_connect.filesystem
 
           # Look up the resource
@@ -309,8 +313,17 @@ module SambaDave
           return 0 if time.nil?
           (time.to_i * 10_000_000) + (time.nsec / 100) + Constants::FILETIME_EPOCH_DIFF
         end
+        # Returns true if the path is a macOS Finder probe that should never
+        # reach the filesystem provider:
+        #   - Any filename starting with "._" (resource fork metadata)
+        #   - ".DS_Store" (macOS directory metadata)
+        def self.macos_probe_path?(fs_path)
+          base = File.basename(fs_path)
+          base.start_with?("._") || base == ".DS_Store"
+        end
+
         private_class_method :extract_name, :smb_path_to_fs_path, :do_create,
-                             :create_open_response, :time_to_filetime
+                             :create_open_response, :time_to_filetime, :macos_probe_path?
       end
     end
   end

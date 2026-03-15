@@ -73,8 +73,9 @@ module SambaDave
         FLAG_REOPEN          = 0x10
 
         # FileInformationClass
-        FILE_BOTH_DIR_INFO    = 0x03
-        FILE_ID_BOTH_DIR_INFO = 0x25
+        FILE_BOTH_DIR_INFO      = 0x03
+        FILE_ID_BOTH_DIR_INFO   = 0x25
+        FILE_ID_FULL_DIR_INFO   = 0x26  # Windows Explorer — like FileIdBothDir but no short name
 
         # @param body [String] raw request body
         # @param open_file_table [OpenFileTable]
@@ -109,9 +110,20 @@ module SambaDave
             return { status: Constants::Status::NO_MORE_FILES, body: "" }
           end
 
-          # Decide which info format to use
-          use_file_id = (request.file_information_class == FILE_ID_BOTH_DIR_INFO) ||
-                        (request.file_information_class != FILE_BOTH_DIR_INFO)
+          # Choose the packing format based on the requested FileInformationClass
+          info_class  = request.file_information_class
+          pack_method = case info_class
+                        when FILE_ID_FULL_DIR_INFO
+                          :pack_full_dir_entry
+                        when FILE_BOTH_DIR_INFO
+                          :pack_entry_no_file_id
+                        else
+                          # FILE_ID_BOTH_DIR_INFO (0x25) or any unknown → use the richest format
+                          :pack_entry
+                        end
+
+          # Fixed-portion size per format (used by fix_next_offsets)
+          fixed_size = (info_class == FILE_ID_FULL_DIR_INFO) ? 80 : 104
 
           # Pack entries into the output buffer up to OutputBufferLength
           max_size    = request.output_buffer_length
@@ -120,7 +132,7 @@ module SambaDave
           single_only = (flags & FLAG_RETURN_SINGLE) != 0
 
           entries[cursor..].each do |entry|
-            packed = pack_entry(entry, use_file_id: use_file_id)
+            packed = send(pack_method, entry)
             # 8-byte align each entry
             padding = (8 - (packed.bytesize % 8)) % 8
             padded  = packed + ("\x00" * padding)
@@ -139,7 +151,7 @@ module SambaDave
           end
 
           # Fix up NextEntryOffset fields in the packed buffer
-          fix_next_offsets(output)
+          fix_next_offsets(output, fixed_size: fixed_size)
 
           response = QueryDirectoryResponse.new(
             output_buffer_length: output.bytesize,
@@ -282,25 +294,78 @@ module SambaDave
           end
         end
 
+        # Pack a single directory entry as FileIdFullDirectoryInformation (0x26).
+        #
+        # FileIdFullDirectoryInformation structure (80-byte fixed portion):
+        #   NextEntryOffset (4)
+        #   FileIndex (4)
+        #   CreationTime (8)
+        #   LastAccessTime (8)
+        #   LastWriteTime (8)
+        #   ChangeTime (8)
+        #   EndOfFile (8)
+        #   AllocationSize (8)
+        #   FileAttributes (4)
+        #   FileNameLength (4)
+        #   EaSize (4)
+        #   Reserved (4)
+        #   FileId (8)
+        #   FileName (FileNameLength bytes, UTF-16LE)
+        #
+        def self.pack_full_dir_entry(entry)
+          name_utf16 = entry[:name].encode("UTF-16LE").b
+          attrs      = entry[:is_dir] ? Constants::FileAttributes::DIRECTORY : Constants::FileAttributes::ARCHIVE
+          mtime      = time_to_filetime(entry[:mtime])
+          ctime      = time_to_filetime(entry[:ctime])
+          size       = entry[:size] || 0
+          alloc      = entry[:is_dir] ? 0 : ((size + 4095) & ~4095)
+
+          [
+            0,            # NextEntryOffset (placeholder)
+            0,            # FileIndex
+            ctime,        # CreationTime
+            mtime,        # LastAccessTime
+            mtime,        # LastWriteTime
+            mtime,        # ChangeTime
+            size,         # EndOfFile
+            alloc,        # AllocationSize
+            attrs,        # FileAttributes
+            name_utf16.bytesize, # FileNameLength
+            0,            # EaSize
+            0,            # Reserved
+            0             # FileId (8 bytes) — 0 for simplicity
+          ].pack("L<L<Q<Q<Q<Q<Q<Q<L<L<L<L<Q<") + name_utf16
+        end
+
+        # Pack using FileIdBothDirectoryInformation format but without a FileId
+        # (for FILE_BOTH_DIR_INFO = 0x03).
+        def self.pack_entry_no_file_id(entry)
+          # Delegate to the full pack_entry — both formats have the same layout for our purposes
+          pack_entry(entry)
+        end
+
         # Walk through the packed buffer and fix NextEntryOffset for each entry.
         # All entries except the last have NextEntryOffset = bytes to next entry.
         # The last entry has NextEntryOffset = 0.
-        def self.fix_next_offsets(buffer)
+        #
+        # @param fixed_size [Integer] total byte length of fixed header (excluding FileName):
+        #   104 for FileIdBothDirectoryInformation, 80 for FileIdFullDirectoryInformation
+        def self.fix_next_offsets(buffer, fixed_size: 104)
+          # FileNameLength is at byte offset 60 from entry start in all our supported formats.
+          # (After NextEntryOffset+FileIndex+4×FILETIMEs+EndOfFile+AllocationSize+FileAttributes
+          #  = 4+4+8+8+8+8+8+8+4 = 60 bytes)
+          name_len_field_offset = 60
+
           offset = 0
-          prev_offset = nil
 
           while offset < buffer.bytesize
-            # Read the FileName length at the position for this entry
-            # Fixed header is 104 bytes; FileName starts at 104
-            name_length = buffer[offset + 60, 4].unpack1("L<") rescue 0
-            # Entry size = 104 fixed + name_length, then padded to 8-byte boundary
-            entry_size  = 104 + name_length
+            name_length = buffer[offset + name_len_field_offset, 4].unpack1("L<") rescue 0
+            entry_size  = fixed_size + name_length
             padded_size = (entry_size + 7) & ~7
 
             next_offset = offset + padded_size
             is_last     = next_offset >= buffer.bytesize
 
-            # Write NextEntryOffset
             value = is_last ? 0 : padded_size
             buffer[offset, 4] = [value].pack("L<")
 
@@ -317,7 +382,8 @@ module SambaDave
         end
 
         private_class_method :build_entries, :skip_entry?, :matches_pattern?,
-                             :pack_entry, :generate_short_name, :fix_next_offsets, :time_to_filetime
+                             :pack_entry, :pack_full_dir_entry, :pack_entry_no_file_id,
+                             :generate_short_name, :fix_next_offsets, :time_to_filetime
       end
     end
   end

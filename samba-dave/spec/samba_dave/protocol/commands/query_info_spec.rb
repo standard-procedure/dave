@@ -274,4 +274,149 @@ RSpec.describe SambaDave::Protocol::Commands::QueryInfo do
       expect(result[:status]).to eq(C::Status::INVALID_HANDLE)
     end
   end
+
+  # ── macOS Finder compatibility ────────────────────────────────────────────
+
+  describe ".handle — macOS resource fork QUERY_INFO" do
+    it "returns STATUS_OBJECT_NAME_NOT_FOUND for ._filename paths" do
+      # Open a resource-fork path directly
+      resource_fork = Dave::Resource.new(
+        path: "/._readme.txt", collection: false,
+        content_type: "application/octet-stream", content_length: 0,
+        etag: '"rf"', last_modified: now, created_at: now
+      )
+      # Use a file id whose open_file's path is a resource fork
+      fid = open_file_table.generate_file_id
+      of  = SambaDave::OpenFile.new(
+        file_id_bytes: fid,
+        path:          "/._readme.txt",
+        is_directory:  false,
+        tree_connect:  tree_connect
+      )
+      open_file_table.add(of)
+
+      result = described_class.handle(
+        build_query_info_body(file_id_bytes: fid,
+                              info_type: INFO_TYPE_FILE, info_class: FILE_BASIC_INFO),
+        open_file_table: open_file_table
+      )
+      expect(result[:status]).to eq(C::Status::OBJECT_NAME_NOT_FOUND)
+    end
+  end
+
+  # ── Windows Explorer compatibility ────────────────────────────────────────
+
+  describe ".handle — FileNormalizedNameInformation (0x30)" do
+    it "returns STATUS_INVALID_INFO_CLASS" do
+      of = make_open_file(file_resource)
+      result = described_class.handle(
+        build_query_info_body(file_id_bytes: of.file_id_bytes,
+                              info_type: INFO_TYPE_FILE, info_class: 0x30),
+        open_file_table: open_file_table
+      )
+      expect(result[:status]).to eq(C::Status::INVALID_INFO_CLASS)
+    end
+  end
+
+  describe ".handle — FileAttributeTagInformation (0x23)" do
+    it "returns STATUS_SUCCESS" do
+      of = make_open_file(file_resource)
+      allow(filesystem).to receive(:get_resource).and_return(file_resource)
+      result = described_class.handle(
+        build_query_info_body(file_id_bytes: of.file_id_bytes,
+                              info_type: INFO_TYPE_FILE, info_class: 0x23),
+        open_file_table: open_file_table
+      )
+      expect(result[:status]).to eq(C::Status::SUCCESS)
+    end
+
+    it "returns an 8-byte buffer with FileAttributes and zero ReparseTag" do
+      of = make_open_file(file_resource)
+      allow(filesystem).to receive(:get_resource).and_return(file_resource)
+      result = described_class.handle(
+        build_query_info_body(file_id_bytes: of.file_id_bytes,
+                              info_type: INFO_TYPE_FILE, info_class: 0x23),
+        open_file_table: open_file_table
+      )
+      resp = SambaDave::Protocol::Commands::QueryInfoResponse.read(result[:body])
+      expect(resp.output_buffer_length).to eq(8)
+      # ReparseTag (bytes 4-7) must be 0
+      reparse_tag = resp.output_buffer[4, 4].unpack1("L<")
+      expect(reparse_tag).to eq(0)
+    end
+  end
+
+  describe ".handle — FileInternalInformation (0x06)" do
+    it "returns STATUS_SUCCESS" do
+      of = make_open_file(file_resource)
+      allow(filesystem).to receive(:get_resource).and_return(file_resource)
+      result = described_class.handle(
+        build_query_info_body(file_id_bytes: of.file_id_bytes,
+                              info_type: INFO_TYPE_FILE, info_class: 0x06),
+        open_file_table: open_file_table
+      )
+      expect(result[:status]).to eq(C::Status::SUCCESS)
+    end
+
+    it "returns an 8-byte buffer with a non-zero stable index" do
+      of = make_open_file(file_resource)
+      allow(filesystem).to receive(:get_resource).and_return(file_resource)
+      result = described_class.handle(
+        build_query_info_body(file_id_bytes: of.file_id_bytes,
+                              info_type: INFO_TYPE_FILE, info_class: 0x06),
+        open_file_table: open_file_table
+      )
+      resp  = SambaDave::Protocol::Commands::QueryInfoResponse.read(result[:body])
+      expect(resp.output_buffer_length).to eq(8)
+      index = resp.output_buffer[0, 8].unpack1("Q<")
+      expect(index).not_to eq(0)
+    end
+
+    it "returns the same index for the same path" do
+      of1 = make_open_file(file_resource)
+      of2 = make_open_file(file_resource)
+      allow(filesystem).to receive(:get_resource).and_return(file_resource)
+
+      result1 = described_class.handle(
+        build_query_info_body(file_id_bytes: of1.file_id_bytes,
+                              info_type: INFO_TYPE_FILE, info_class: 0x06),
+        open_file_table: open_file_table
+      )
+      result2 = described_class.handle(
+        build_query_info_body(file_id_bytes: of2.file_id_bytes,
+                              info_type: INFO_TYPE_FILE, info_class: 0x06),
+        open_file_table: open_file_table
+      )
+
+      resp1 = SambaDave::Protocol::Commands::QueryInfoResponse.read(result1[:body])
+      resp2 = SambaDave::Protocol::Commands::QueryInfoResponse.read(result2[:body])
+      expect(resp1.output_buffer).to eq(resp2.output_buffer)
+    end
+  end
+
+  describe ".handle — FileEaInformation (0x07)" do
+    it "returns STATUS_SUCCESS" do
+      of = make_open_file(file_resource)
+      allow(filesystem).to receive(:get_resource).and_return(file_resource)
+      result = described_class.handle(
+        build_query_info_body(file_id_bytes: of.file_id_bytes,
+                              info_type: INFO_TYPE_FILE, info_class: 0x07),
+        open_file_table: open_file_table
+      )
+      expect(result[:status]).to eq(C::Status::SUCCESS)
+    end
+
+    it "returns a 4-byte buffer with EA size = 0" do
+      of = make_open_file(file_resource)
+      allow(filesystem).to receive(:get_resource).and_return(file_resource)
+      result = described_class.handle(
+        build_query_info_body(file_id_bytes: of.file_id_bytes,
+                              info_type: INFO_TYPE_FILE, info_class: 0x07),
+        open_file_table: open_file_table
+      )
+      resp   = SambaDave::Protocol::Commands::QueryInfoResponse.read(result[:body])
+      ea_size = resp.output_buffer[0, 4].unpack1("L<")
+      expect(ea_size).to eq(0)
+    end
+  end
 end
