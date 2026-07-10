@@ -20,7 +20,7 @@ RSpec.describe SambaDave::Connection do
   let(:provider)    { SambaDave::TestSecurityProvider.new("alice" => "wonderland") }
   let(:server)      { instance_double("SambaDave::Server", server_guid: server_guid, security_provider: provider, logger: nil) }
 
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,7 +36,12 @@ RSpec.describe SambaDave::Connection do
     conn = described_class.new(server_sock, server)
     conn.run
 
-    client_sock.shutdown(Socket::SHUT_RD)
+    # The server may have already fully closed its end, in which case a
+    # half-close raises ENOTCONN on BSD/macOS (but not Linux) — tolerate it.
+    begin
+      client_sock.shutdown(Socket::SHUT_RD)
+    rescue Errno::ENOTCONN
+    end
     client_sock.read.tap { client_sock.close rescue nil }
   end
 

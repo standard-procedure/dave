@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Dave is a mono-repo of independent gems, each with its own Gemfile and
+# spec suite. We run every component's specs against every supported Ruby so
+# packaging drift (e.g. a bundled gem that left the default set in 4.0) and
+# version-specific behaviour are caught per-component.
+jobs:
+  specs:
+    name: ${{ matrix.gem }} on Ruby ${{ matrix.ruby }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.3", "3.4", "4.0"]
+        gem:
+          - dave-server
+          - dave-filesystem
+          - dave-security
+          - samba-dave
+    env:
+      # Point Bundler (and setup-ruby's cache) at this component's Gemfile.
+      BUNDLE_GEMFILE: ${{ github.workspace }}/${{ matrix.gem }}/Gemfile
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Ruby ${{ matrix.ruby }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Run ${{ matrix.gem }} specs
+        working-directory: ${{ matrix.gem }}
+        run: bundle exec rspec

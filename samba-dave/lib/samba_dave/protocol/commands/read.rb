@@ -97,6 +97,12 @@ module SambaDave
         # ── Private ────────────────────────────────────────────────────────────
 
         # Read `length` bytes at `offset` from the open file's filesystem.
+        #
+        # Relies on read_content returning a *seekable* IO (see
+        # Dave::FileSystemInterface#read_content): we seek to the requested
+        # offset and read just that range, rather than buffering the whole
+        # object. A remote-backed provider must return an IO that turns
+        # #seek + #read(length) into ranged reads for this to stay cheap.
         def self.read_data(open_file, offset, length)
           io   = open_file.filesystem.read_content(open_file.path)
           io.seek(offset)

@@ -4,7 +4,7 @@ require "spec_helper"
 require "samba_dave/protocol/commands/cancel"
 
 RSpec.describe SambaDave::Protocol::Commands::Cancel do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # Build CANCEL request body — StructureSize(2) + Reserved(2) = 4 bytes.
   def build_cancel_body

@@ -4,7 +4,7 @@ require "spec_helper"
 require "samba_dave/protocol/commands/lock"
 
 RSpec.describe SambaDave::Protocol::Commands::Lock do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # Build a minimal LOCK request body.
   # MS-SMB2 section 2.2.26 — fixed 48-byte body:

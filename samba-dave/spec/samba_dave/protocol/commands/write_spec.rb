@@ -9,7 +9,7 @@ require "samba_dave/open_file_table"
 require "samba_dave/protocol/commands/write"
 
 RSpec.describe SambaDave::Protocol::Commands::Write do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   let(:filesystem)      { double("FileSystemProvider") }
   let(:tree_connect)    { SambaDave::TreeConnect.new(tree_id: 1, share_name: "s", filesystem: filesystem) }
@@ -196,6 +196,40 @@ RSpec.describe SambaDave::Protocol::Commands::Write do
       final_content = written_chunks.last[1]
       expect(final_content[0, chunk_size]).to eq("A" * chunk_size)
       expect(final_content[chunk_size, chunk_size]).to eq("B" * chunk_size)
+    end
+  end
+
+  describe ".handle — provider that supports partial writes" do
+    before { allow(filesystem).to receive(:supports_partial_writes?).and_return(true) }
+
+    it "writes only the changed bytes at the offset, never reading the whole file" do
+      of = make_open_file
+      captured = {}
+      allow(filesystem).to receive(:write_content) do |path, io, **kwargs|
+        captured[:path]   = path
+        captured[:offset] = kwargs[:offset]
+        captured[:data]   = io.read
+        nil
+      end
+      expect(filesystem).not_to receive(:read_content)
+
+      result = described_class.handle(build_write_body(of.file_id_bytes, "XYZ", file_offset: 7),
+                                      open_file_table: open_file_table)
+
+      expect(result[:status]).to eq(C::Status::SUCCESS)
+      expect(captured[:path]).to eq("/file.txt")
+      expect(captured[:offset]).to eq(7)
+      expect(captured[:data]).to eq("XYZ")
+    end
+
+    it "reports the number of bytes written" do
+      of = make_open_file
+      allow(filesystem).to receive(:write_content).and_return(nil)
+
+      result   = described_class.handle(build_write_body(of.file_id_bytes, "ABCD", file_offset: 0),
+                                        open_file_table: open_file_table)
+      response = SambaDave::Protocol::Commands::WriteResponse.read(result[:body])
+      expect(response.bytes_written).to eq(4)
     end
   end
 end

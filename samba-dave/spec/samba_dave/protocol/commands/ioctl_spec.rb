@@ -5,7 +5,7 @@ require "samba_dave/open_file_table"
 require "samba_dave/protocol/commands/ioctl"
 
 RSpec.describe SambaDave::Protocol::Commands::Ioctl do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   FSCTL_VALIDATE_NEGOTIATE_INFO = 0x00140204
   FSCTL_GET_REPARSE_POINT       = 0x000900A8

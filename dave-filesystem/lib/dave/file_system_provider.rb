@@ -49,14 +49,42 @@ module Dave
       File.open(abs, "rb")
     end
 
-    def write_content(path, io, content_type: nil)
+    def write_content(path, io, offset: nil, content_type: nil)
       abs = absolute(path)
       parent = File.dirname(abs)
       raise Dave::NotFoundError, "Parent directory not found for: #{path}" unless File.directory?(parent)
 
       content = io.read
-      File.open(abs, "wb") { |f| f.write(content) }
-      '"' + Digest::MD5.hexdigest(content) + '"'
+
+      if offset.nil?
+        # Whole-file create/replace; returns the new content's ETag.
+        File.open(abs, "wb") { |f| f.write(content) }
+        '"' + Digest::MD5.hexdigest(content) + '"'
+      else
+        # Partial write: splice `content` in at `offset`, writing only the
+        # changed bytes (no whole-file rewrite). Opening RDWR|CREAT without
+        # truncation preserves the existing bytes; seeking past the current
+        # end produces a zero-filled hole, matching SMB WRITE semantics.
+        # Returns nil — computing a whole-file ETag would defeat the point.
+        File.open(abs, File::RDWR | File::CREAT | File::BINARY) do |f|
+          f.seek(offset)
+          f.write(content)
+        end
+        nil
+      end
+    end
+
+    # Resizes the file at `path` to exactly `size` bytes: truncating drops the
+    # tail, growing zero-fills. Creates the file (grown from empty) if absent.
+    # Used by SMB SET_INFO end-of-file so an EOF change touches only the file
+    # length, not the whole object.
+    def truncate(path, size)
+      abs = absolute(path)
+      parent = File.dirname(abs)
+      raise Dave::NotFoundError, "Parent directory not found for: #{path}" unless File.directory?(parent)
+
+      File.open(abs, File::RDWR | File::CREAT | File::BINARY) { |f| f.truncate(size) }
+      nil
     end
 
     # ──────────────────────────────────────────────
@@ -95,6 +123,10 @@ module Dave
     # ──────────────────────────────────────────────
 
     def supports_locking?
+      true
+    end
+
+    def supports_partial_writes?
       true
     end
 

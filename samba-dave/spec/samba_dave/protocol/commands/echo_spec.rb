@@ -4,7 +4,7 @@ require "spec_helper"
 require "samba_dave/protocol/commands/echo"
 
 RSpec.describe SambaDave::Protocol::Commands::Echo do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   describe ".handle" do
     it "returns STATUS_SUCCESS" do

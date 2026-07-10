@@ -10,7 +10,7 @@ require "samba_dave/session"
 require "samba_dave/open_file_table"
 
 RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # ── § 1  SMB 2.1 Dialect (0x0210) ─────────────────────────────────────────
 
@@ -328,7 +328,12 @@ RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
       client_sock.shutdown(Socket::SHUT_WR)
       conn = SambaDave::Connection.new(server_sock, server)
       conn.run
-      client_sock.shutdown(Socket::SHUT_RD)
+      # Server may have fully closed already — half-close raises ENOTCONN on
+      # BSD/macOS (but not Linux). Tolerate it; the response is still readable.
+      begin
+        client_sock.shutdown(Socket::SHUT_RD)
+      rescue Errno::ENOTCONN
+      end
       data = client_sock.read
       client_sock.close rescue nil
       data
@@ -454,7 +459,12 @@ RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
       client_sock.write(frame)
       client_sock.shutdown(Socket::SHUT_WR)
       SambaDave::Connection.new(server_sock, server).run
-      client_sock.shutdown(Socket::SHUT_RD)
+      # Server may have fully closed already — half-close raises ENOTCONN on
+      # BSD/macOS (but not Linux). Tolerate it; the response is still readable.
+      begin
+        client_sock.shutdown(Socket::SHUT_RD)
+      rescue Errno::ENOTCONN
+      end
       client_sock.read
       client_sock.close rescue nil
     end

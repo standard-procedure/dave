@@ -30,6 +30,10 @@ RSpec.describe Dave::FileSystemInterface do
       expect { instance.write_content("/foo", StringIO.new("data")) }.to raise_error(NotImplementedError)
     end
 
+    it "raises for truncate" do
+      expect { instance.truncate("/foo", 10) }.to raise_error(NotImplementedError)
+    end
+
     it "raises for create_collection" do
       expect { instance.create_collection("/foo/") }.to raise_error(NotImplementedError)
     end
@@ -83,24 +87,31 @@ RSpec.describe Dave::FileSystemInterface do
     end
   end
 
-  describe "exactly 17 method stubs" do
+  describe "concrete default methods" do
+    it "supports_partial_writes? defaults to false rather than raising" do
+      expect(instance.supports_partial_writes?).to be false
+    end
+  end
+
+  describe "the interface surface" do
     let(:expected_methods) do
       %i[
-        get_resource list_children read_content write_content create_collection
+        get_resource list_children read_content write_content truncate create_collection
         delete copy move get_properties set_properties delete_properties
-        lock unlock get_lock supports_locking? quota_available_bytes quota_used_bytes
+        lock unlock get_lock supports_locking? supports_partial_writes?
+        quota_available_bytes quota_used_bytes
       ]
     end
 
-    it "defines all 17 interface methods" do
+    it "defines all 19 interface methods" do
       expected_methods.each do |method_name|
         expect(implementing_class.instance_methods).to include(method_name)
       end
     end
 
-    it "defines exactly 17 interface methods (no extras)" do
+    it "defines exactly 19 interface methods (no extras)" do
       interface_methods = Dave::FileSystemInterface.instance_methods
-      expect(interface_methods.length).to eq(17)
+      expect(interface_methods.length).to eq(19)
     end
   end
 end

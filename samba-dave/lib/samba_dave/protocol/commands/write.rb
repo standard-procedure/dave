@@ -108,27 +108,30 @@ module SambaDave
         def self.write_data(open_file, offset, data)
           filesystem = open_file.filesystem
 
-          # Read existing content (empty if file doesn't exist yet)
-          existing = begin
-            io = filesystem.read_content(open_file.path)
-            content = io.read
-            io.close
-            content.b
-          rescue Dave::NotFoundError
-            "".b
+          if partial_writes?(filesystem)
+            # The provider can apply just the changed bytes — hand it the
+            # range directly. No read-modify-write, so a large file is not
+            # re-transferred on every WRITE against a remote-backed provider.
+            filesystem.write_content(open_file.path, StringIO.new(data.b), offset: offset)
+          else
+            # Fallback for whole-file-only providers: read the object, splice
+            # the new bytes in (zero-filling any gap past EOF), write it back.
+            existing = begin
+              io = filesystem.read_content(open_file.path)
+              content = io.read
+              io.close
+              content.b
+            rescue Dave::NotFoundError
+              "".b
+            end
+
+            end_pos  = offset + data.bytesize
+            new_size = [existing.bytesize, end_pos].max
+            buf = existing.ljust(new_size, "\x00".b)
+            buf[offset, data.bytesize] = data.b
+
+            filesystem.write_content(open_file.path, StringIO.new(buf))
           end
-
-          # Calculate new file size
-          end_pos  = offset + data.bytesize
-          new_size = [existing.bytesize, end_pos].max
-
-          # Build buffer: extend with zero bytes if needed
-          buf = existing.ljust(new_size, "\x00".b)
-
-          # Splice in the new data
-          buf[offset, data.bytesize] = data.b
-
-          filesystem.write_content(open_file.path, StringIO.new(buf))
 
           response = WriteResponse.new(bytes_written: data.bytesize)
           { status: Constants::Status::SUCCESS, body: response.to_binary_s }
@@ -136,7 +139,11 @@ module SambaDave
           { status: Constants::Status::ACCESS_DENIED, body: "" }
         end
 
-        private_class_method :write_data
+        def self.partial_writes?(filesystem)
+          filesystem.respond_to?(:supports_partial_writes?) && filesystem.supports_partial_writes?
+        end
+
+        private_class_method :write_data, :partial_writes?
       end
     end
   end
