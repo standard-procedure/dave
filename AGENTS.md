@@ -81,6 +81,23 @@ cd dave-security && bundle exec rspec
 bundle exec rake spec
 ```
 
+> **Note:** the `rake spec` task covers `dave-server`, `dave-filesystem`, and
+> `dave-security` only. Run `samba-dave`'s suite directly
+> (`cd samba-dave && bundle exec rspec`).
+
+### Continuous Integration
+
+`.github/workflows/ci.yml` runs a **two-axis matrix** — every component gem
+(`dave-server`, `dave-filesystem`, `dave-security`, `samba-dave`) against
+every supported Ruby (**3.3, 3.4, 4.0**). Each job bundles inside its
+component directory (`BUNDLE_GEMFILE` per gem) and runs that gem's specs, so
+per-component packaging drift is caught — e.g. `logger` left Ruby's default
+gems in 4.0 and must be an explicit dependency.
+
+When adding a gem to the mono-repo, add it to the `matrix.gem` list. Keep each
+gem's runtime dependencies (including former default gems like `logger`)
+declared in its gemspec so the 4.0 leg stays green.
+
 ## Implementation Status
 
 ### WebDAV (dave-server) — `docs/IMPLEMENTATION-PLAN.md`
