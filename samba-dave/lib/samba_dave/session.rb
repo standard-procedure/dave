@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "samba_dave/protocol/constants"
+require "samba_dave/crypto/kdf"
+
 module SambaDave
   # Per-session state for an authenticated SMB2 client.
   #
@@ -21,7 +24,13 @@ module SambaDave
   # The credit counter is also mutex-protected.
   #
   class Session
+    # SMB 3.0/3.0.2 signing-key derivation constants (SP800-108 KDF inputs).
+    SMB3_SIGNING_LABEL   = "SMB2AESCMAC\x00".b.freeze
+    SMB3_SIGNING_CONTEXT = "SmbSign\x00".b.freeze
+
     attr_reader :session_id, :user_identity, :signing_key
+    # :hmac_sha256 (SMB 2.x) or :aes_cmac (SMB 3.x) — the MAC for this session.
+    attr_reader :signing_algorithm
     attr_accessor :session_key
     # Whether the client negotiated SMB2_NEGOTIATE_SIGNING_REQUIRED for this
     # session; when true, the server rejects unsigned requests on it.
@@ -31,8 +40,9 @@ module SambaDave
     def initialize(session_id:)
       @session_id       = session_id
       @user_identity    = nil
-      @session_key      = nil
-      @signing_key      = nil
+      @session_key       = nil
+      @signing_key       = nil
+      @signing_algorithm = nil
       @signing_required = false
       @authenticated  = false
       @tree_connects  = {}   # tree_id (Integer) → TreeConnect
@@ -61,20 +71,38 @@ module SambaDave
       @signing_required
     end
 
-    # Install the SMB2 session key and its signing key.
+    # Install the SMB2/3 session key and derive the signing key + MAC algorithm
+    # for the negotiated dialect.
     #
-    # For SMB dialects 2.0.2 and 2.1 (what this server negotiates), MS-SMB2
-    # defines Session.SigningKey to be Session.SessionKey itself — no KDF. The
-    # SessionKey is the first 16 bytes of the GSS/NTLM key, right-padded with
-    # zeroes if shorter. (The HMAC-SHA256 "SMBSigningKey" derivation is an
-    # SMB 3.1.1 construction and must NOT be applied here.)
+    # The SessionKey is the first 16 bytes of the NTLM ExportedSessionKey,
+    # right-padded with zeroes if shorter. From it:
+    #
+    # - SMB 2.0.2/2.1: SigningKey == SessionKey (no KDF); MAC = HMAC-SHA256.
+    # - SMB 3.0/3.0.2: SigningKey = SMB3KDF(SessionKey, "SMB2AESCMAC\0",
+    #   "SmbSign\0"); MAC = AES-128-CMAC.
+    #
+    # (SMB 3.1.1 uses a different KDF context — the pre-auth integrity hash —
+    # and is handled when that dialect is negotiated.)
     #
     # @param key [String, nil] the NTLM ExportedSessionKey (16 bytes)
-    def set_session_key(key)
+    # @param dialect [Integer] the negotiated SMB dialect revision
+    def set_session_key(key, dialect: Protocol::Constants::Dialects::SMB2_1)
       @session_key = key
-      @signing_key = if key
-        bytes = key.b
-        bytes.bytesize >= 16 ? bytes.byteslice(0, 16) : bytes + ("\x00".b * (16 - bytes.bytesize))
+      if key.nil?
+        @signing_key = nil
+        @signing_algorithm = nil
+        return
+      end
+
+      bytes = key.b
+      padded = bytes.bytesize >= 16 ? bytes.byteslice(0, 16) : bytes + ("\x00".b * (16 - bytes.bytesize))
+
+      if dialect >= Protocol::Constants::Dialects::SMB3_0
+        @signing_key = Crypto::KDF.sp800_108_counter(key: padded, label: SMB3_SIGNING_LABEL, context: SMB3_SIGNING_CONTEXT)
+        @signing_algorithm = :aes_cmac
+      else
+        @signing_key = padded
+        @signing_algorithm = :hmac_sha256
       end
     end
 

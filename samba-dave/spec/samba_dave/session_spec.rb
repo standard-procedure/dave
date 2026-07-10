@@ -85,6 +85,26 @@ RSpec.describe SambaDave::Session do
       session = described_class.new(session_id: session_id)
       session.set_session_key(nil)
       expect(session.signing_key).to be_nil
+      expect(session.signing_algorithm).to be_nil
+    end
+
+    it "selects HMAC-SHA256 for an SMB 2.x session" do
+      session = described_class.new(session_id: session_id)
+      session.set_session_key("k" * 16, dialect: SambaDave::Protocol::Constants::Dialects::SMB2_1)
+      expect(session.signing_key).to eq("k" * 16)
+      expect(session.signing_algorithm).to eq(:hmac_sha256)
+    end
+
+    context "for an SMB 3.0 session" do
+      # MS known-answer vector: SessionKey 7CD4… → SigningKey 0B7E…
+      let(:session_key) { ["7CD451825D0450D235424E44BA6E78CC"].pack("H*") }
+
+      it "derives the signing key via the SMB3 KDF and selects AES-CMAC" do
+        session = described_class.new(session_id: session_id)
+        session.set_session_key(session_key, dialect: SambaDave::Protocol::Constants::Dialects::SMB3_0)
+        expect(session.signing_key.unpack1("H*").upcase).to eq("0B7E9C5CAC36C0F6EA9AB275298CEDCE")
+        expect(session.signing_algorithm).to eq(:aes_cmac)
+      end
     end
   end
 
