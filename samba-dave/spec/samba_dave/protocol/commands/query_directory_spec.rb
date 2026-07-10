@@ -8,7 +8,7 @@ require "samba_dave/open_file_table"
 require "samba_dave/protocol/commands/query_directory"
 
 RSpec.describe SambaDave::Protocol::Commands::QueryDirectory do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # FileInformationClass for QUERY_DIRECTORY
   FILE_ID_BOTH_DIR_INFO  = 0x25

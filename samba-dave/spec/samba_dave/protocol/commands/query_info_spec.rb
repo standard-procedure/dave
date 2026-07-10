@@ -8,7 +8,7 @@ require "samba_dave/open_file_table"
 require "samba_dave/protocol/commands/query_info"
 
 RSpec.describe SambaDave::Protocol::Commands::QueryInfo do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # InfoType values
   INFO_TYPE_FILE       = 0x01

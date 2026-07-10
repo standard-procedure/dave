@@ -10,7 +10,7 @@ require "samba_dave/session"
 require "samba_dave/open_file_table"
 
 RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # ── § 1  SMB 2.1 Dialect (0x0210) ─────────────────────────────────────────
 

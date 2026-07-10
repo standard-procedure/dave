@@ -8,7 +8,7 @@ require "samba_dave/open_file_table"
 require "samba_dave/protocol/commands/create"
 
 RSpec.describe SambaDave::Protocol::Commands::Create do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # CreateDisposition values
   CREATE_DISPOSITION_SUPERSEDE     = 0

@@ -4,7 +4,7 @@ require "spec_helper"
 require "samba_dave/protocol/commands/change_notify"
 
 RSpec.describe SambaDave::Protocol::Commands::ChangeNotify do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # Build a minimal CHANGE_NOTIFY request body.
   # MS-SMB2 section 2.2.35 — fixed 32-byte body:

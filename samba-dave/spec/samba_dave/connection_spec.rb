@@ -20,7 +20,7 @@ RSpec.describe SambaDave::Connection do
   let(:provider)    { SambaDave::TestSecurityProvider.new("alice" => "wonderland") }
   let(:server)      { instance_double("SambaDave::Server", server_guid: server_guid, security_provider: provider, logger: nil) }
 
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   # ── Helpers ──────────────────────────────────────────────────────────────────
 

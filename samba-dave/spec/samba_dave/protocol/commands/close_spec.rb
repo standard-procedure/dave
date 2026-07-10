@@ -8,7 +8,7 @@ require "samba_dave/open_file_table"
 require "samba_dave/protocol/commands/close"
 
 RSpec.describe SambaDave::Protocol::Commands::Close do
-  C = SambaDave::Protocol::Constants
+  C = SambaDave::Protocol::Constants unless defined?(C)
 
   let(:filesystem)      { double("FileSystemProvider") }
   let(:tree_connect)    { SambaDave::TreeConnect.new(tree_id: 1, share_name: "s", filesystem: filesystem) }
