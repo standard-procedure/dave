@@ -116,12 +116,12 @@ declared in its gemspec so the 4.0 leg stays green.
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 1 | 🔲 | TCP skeleton + dialect negotiation |
-| 2 | 🔲 | Authentication (NTLM + SPNEGO) |
-| 3 | 🔲 | Tree connect + directory listing |
-| 4 | 🔲 | Read/write file operations |
-| 5 | 🔲 | Client compatibility (Windows/macOS) |
-| 6 | 🔲 | Hardening + SMB 2.1 dialect |
+| 1 | ✅ | TCP skeleton + dialect negotiation |
+| 2 | ✅ | Authentication (NTLM + SPNEGO) |
+| 3 | ✅ | Tree connect + directory listing |
+| 4 | ✅ | Read/write file operations |
+| 5 | ✅ | Client compatibility (Windows/macOS) |
+| 6 | ✅ | Hardening + SMB 2.1 dialect |
 
 ## Agent Workflow
 
