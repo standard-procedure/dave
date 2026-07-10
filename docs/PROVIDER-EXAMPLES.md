@@ -107,12 +107,14 @@ module Dave
       end
     end
 
-    def write_content(path, content, content_type: nil)
+    def write_content(path, io, offset: nil, content_type: nil)
       parent = parent_path(path)
       @mutex.synchronize do
         raise Dave::NotFoundError, "Parent not found: #{parent}" unless @collections.include?(parent)
 
-        body = content.read
+        # Whole-file only: this provider leaves supports_partial_writes? at its
+        # default of false, so consumers never pass a non-nil offset.
+        body = io.read
         etag = %("#{Digest::MD5.hexdigest(body)}")
         now = Time.now
 
@@ -465,7 +467,7 @@ Both specs MUST pass. Any provider that passes the compliance suite works with `
 To implement a provider backed by a custom storage system (S3, database, etc.):
 
 1. Create a class that `include Dave::FileSystemInterface`
-2. Override all 17 methods (the interface raises `NotImplementedError` as a reminder)
+2. Override the interface methods (they raise `NotImplementedError` as a reminder). `supports_partial_writes?` is the exception — it defaults to `false`, so a whole-file-only provider needs no change.
 3. Add `include Dave::FileSystemInterface::ComplianceTests` to your spec and make all examples pass
 4. Inject your provider: `Dave::Server.new(filesystem: MyS3Provider.new(bucket: "my-bucket"))`
 
@@ -475,3 +477,5 @@ Key implementation notes:
 - **Collection paths** always end with `/` — your provider should normalise consistently
 - **Thread safety** — providers are shared across concurrent requests; use Mutex where needed
 - **Streaming** — `read_content` should return a real IO object, not load into a String, to support large files
+- **Seekable reads** — that IO must be **seekable**: SMB READ does `io.seek(offset); io.read(length)` to serve a byte range. If your backing store is a non-seekable network stream (S3, HTTP), return a small adapter IO that turns `#seek` + `#read(length)` into ranged GETs (e.g. an S3 `Range: bytes=offset-` request) rather than buffering the whole object.
+- **Partial writes (optional)** — override `supports_partial_writes?` to return `true`, then implement `write_content(path, io, offset:)` (apply only the bytes at `offset`) and `truncate(path, size)` (resize without a full rewrite). Consumers then avoid read-modify-writing the whole object on every SMB WRITE / end-of-file change — essential for a remote-backed store where a whole-file rewrite is an O(filesize) round-trip. Leave it `false` and the shared compliance suite skips the partial-write examples; whole-file writes remain the fallback.
