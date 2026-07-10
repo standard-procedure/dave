@@ -12,6 +12,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency "dave-server"          # Shared interfaces: FileSystemInterface, SecurityInterface, Resource, Principal
   spec.add_dependency "rubyntlm", "~> 0.6"  # NTLM Type 1/2/3 message handling
   spec.add_dependency "bindata", "~> 2.5"   # Binary struct definitions for SMB2 wire format
+  spec.add_dependency "logger"              # No longer a default gem in Ruby 4.0; used by StructuredLogger
 
   spec.add_development_dependency "rspec", "~> 3.0"
   spec.add_development_dependency "simplecov"
