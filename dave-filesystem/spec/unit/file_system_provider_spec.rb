@@ -179,6 +179,13 @@ RSpec.describe Dave::FileSystemProvider do
         expect(io.read).to eq("hello world")
         io.close
       end
+
+      it "returns a seekable IO so a ranged read can start at an offset" do
+        io = provider.read_content("/data.txt")
+        io.seek(6)
+        expect(io.read(5)).to eq("world")
+        io.close
+      end
     end
   end
 
@@ -213,6 +220,59 @@ RSpec.describe Dave::FileSystemProvider do
           provider.write_content("/missing-parent/file.txt", StringIO.new("x"))
         }.to raise_error(Dave::NotFoundError)
       end
+    end
+
+    context "when given an offset (partial write)" do
+      before { provider.write_content("/partial.txt", StringIO.new("AAAAA")) }
+
+      it "splices the new bytes in at the offset, leaving the rest intact" do
+        provider.write_content("/partial.txt", StringIO.new("XX"), offset: 2)
+        expect(File.binread(File.join(tmpdir, "partial.txt"))).to eq("AAXXA")
+      end
+
+      it "does not rewrite bytes before the offset" do
+        provider.write_content("/partial.txt", StringIO.new("Z"), offset: 0)
+        expect(File.binread(File.join(tmpdir, "partial.txt"))).to eq("ZAAAA")
+      end
+
+      it "extends the file, zero-filling the gap, when the offset is past the end" do
+        provider.write_content("/partial.txt", StringIO.new("Z"), offset: 7)
+        expect(File.binread(File.join(tmpdir, "partial.txt"))).to eq("AAAAA\x00\x00Z".b)
+      end
+
+      it "creates the file when it does not yet exist" do
+        provider.write_content("/fresh.txt", StringIO.new("hi"), offset: 3)
+        expect(File.binread(File.join(tmpdir, "fresh.txt"))).to eq("\x00\x00\x00hi".b)
+      end
+    end
+  end
+
+  describe "#supports_partial_writes?" do
+    it "returns true" do
+      expect(provider.supports_partial_writes?).to be true
+    end
+  end
+
+  describe "#truncate" do
+    before { provider.write_content("/resize.txt", StringIO.new("ABCDEF")) }
+
+    it "shrinks the file to the given size" do
+      provider.truncate("/resize.txt", 3)
+      expect(File.binread(File.join(tmpdir, "resize.txt"))).to eq("ABC")
+    end
+
+    it "grows the file, zero-filling, to the given size" do
+      provider.truncate("/resize.txt", 8)
+      expect(File.binread(File.join(tmpdir, "resize.txt"))).to eq("ABCDEF\x00\x00".b)
+    end
+
+    it "creates an empty file grown to size when it does not yet exist" do
+      provider.truncate("/new-resize.txt", 4)
+      expect(File.binread(File.join(tmpdir, "new-resize.txt"))).to eq("\x00\x00\x00\x00".b)
+    end
+
+    it "raises Dave::NotFoundError when the parent directory is missing" do
+      expect { provider.truncate("/missing-parent/x.txt", 4) }.to raise_error(Dave::NotFoundError)
     end
   end
 

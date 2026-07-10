@@ -49,6 +49,45 @@ module Dave
             expect(io).to respond_to(:each)
           end
 
+          it "read_content returns a seekable IO for ranged reads" do
+            subject.write_content("/ranged.txt", StringIO.new("hello world"))
+            io = subject.read_content("/ranged.txt")
+            io.seek(6)
+            expect(io.read(5)).to eq("world")
+          end
+
+          it "supports_partial_writes? returns a Boolean" do
+            expect(subject.supports_partial_writes?).to satisfy { |v| v == true || v == false }
+          end
+
+          context "when the provider supports partial writes" do
+            before { skip "provider does not support partial writes" unless subject.supports_partial_writes? }
+
+            it "write_content with an offset splices bytes in without disturbing the rest" do
+              subject.write_content("/splice.txt", StringIO.new("AAAAA"))
+              subject.write_content("/splice.txt", StringIO.new("XX"), offset: 2)
+              expect(subject.read_content("/splice.txt").read).to eq("AAXXA")
+            end
+
+            it "write_content with an offset past the end zero-fills the gap" do
+              subject.write_content("/grow.txt", StringIO.new("AB"))
+              subject.write_content("/grow.txt", StringIO.new("Z"), offset: 4)
+              expect(subject.read_content("/grow.txt").read.b).to eq("AB\x00\x00Z".b)
+            end
+
+            it "truncate shrinks a file to the given size" do
+              subject.write_content("/shrink.txt", StringIO.new("ABCDEF"))
+              subject.truncate("/shrink.txt", 3)
+              expect(subject.read_content("/shrink.txt").read).to eq("ABC")
+            end
+
+            it "truncate grows a file, zero-filling, to the given size" do
+              subject.write_content("/extend.txt", StringIO.new("AB"))
+              subject.truncate("/extend.txt", 5)
+              expect(subject.read_content("/extend.txt").read.b).to eq("AB\x00\x00\x00".b)
+            end
+          end
+
           it "write_content returns a quoted ETag string" do
             etag = subject.write_content("/etag-return.txt", StringIO.new("content"))
             expect(etag).to match(/\A"[^"]+"\z/)
