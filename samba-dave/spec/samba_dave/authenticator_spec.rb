@@ -92,7 +92,14 @@ RSpec.describe SambaDave::Authenticator do
         type3_bytes = perform_round1_and_build_type3
         spnego3 = build_spnego_neg_token_resp(type3_bytes)
         result = authenticator.complete_auth(session_id, spnego3)
-        expect(result[:username]).to eq(username)
+        expect(result.identity[:username]).to eq(username)
+      end
+
+      it "returns a 16-byte SMB2 session key for signing" do
+        type3_bytes = perform_round1_and_build_type3
+        spnego3 = build_spnego_neg_token_resp(type3_bytes)
+        result = authenticator.complete_auth(session_id, spnego3)
+        expect(result.session_key.bytesize).to eq(16)
       end
 
       it "clears the pending challenge after completion" do

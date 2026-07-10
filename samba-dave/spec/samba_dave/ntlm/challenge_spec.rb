@@ -72,13 +72,23 @@ RSpec.describe SambaDave::NTLM::Challenge do
     end
 
     context "with correct credentials" do
-      it "returns the username" do
+      it "returns a result carrying the username" do
         result = described_class.validate(
           type3_bytes,
           server_challenge: server_challenge,
           password: password
         )
-        expect(result).to eq(username)
+        expect(result.username).to eq(username)
+      end
+
+      it "returns a 16-byte session key derived from the exchange" do
+        result = described_class.validate(
+          type3_bytes,
+          server_challenge: server_challenge,
+          password: password
+        )
+        expect(result.session_key).to be_a(String)
+        expect(result.session_key.bytesize).to eq(16)
       end
     end
 
@@ -110,7 +120,7 @@ RSpec.describe SambaDave::NTLM::Challenge do
           server_challenge: server_challenge,
           password: ""
         )
-        expect(result).to eq(username)
+        expect(result.username).to eq(username)
       end
 
       it "returns nil when wrong password provided for empty-password account" do

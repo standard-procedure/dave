@@ -59,6 +59,35 @@ RSpec.describe SambaDave::Session do
     end
   end
 
+  describe "#set_session_key" do
+    it "stores the session key" do
+      session = described_class.new(session_id: session_id)
+      session.set_session_key("k" * 16)
+      expect(session.session_key).to eq("k" * 16)
+    end
+
+    it "uses the raw 16-byte session key as the SMB 2.x signing key (no KDF)" do
+      # For dialects 2.0.2/2.1, Session.SigningKey == Session.SessionKey.
+      session = described_class.new(session_id: session_id)
+      key = ["270E1BA896585EEB7AF3472D3B4C75A7"].pack("H*")
+      session.set_session_key(key)
+      expect(session.signing_key).to eq(key)
+    end
+
+    it "zero-pads a short session key to 16 bytes for signing" do
+      session = described_class.new(session_id: session_id)
+      session.set_session_key("abc")
+      expect(session.signing_key.bytesize).to eq(16)
+      expect(session.signing_key).to eq("abc".b + ("\x00".b * 13))
+    end
+
+    it "leaves signing_key nil when the key is nil" do
+      session = described_class.new(session_id: session_id)
+      session.set_session_key(nil)
+      expect(session.signing_key).to be_nil
+    end
+  end
+
   describe "with multiple sessions" do
     it "each session has its own state" do
       s1 = described_class.new(session_id: 1)

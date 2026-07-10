@@ -102,11 +102,11 @@ RSpec.describe SambaDave::Connection do
     SambaDave::Protocol::Transport.frame(header.to_binary_s + body.b)
   end
 
-  def session_setup_request_body(security_buffer)
+  def session_setup_request_body(security_buffer, security_mode: 1)
     [
       25,                        # structure_size
       0,                         # flags
-      1,                         # security_mode
+      security_mode,             # security_mode (1 = enabled, 2 = required)
       0,                         # capabilities
       0,                         # channel
       64 + 24,                   # security_buffer_offset
@@ -894,6 +894,105 @@ RSpec.describe SambaDave::Connection do
       bad_client.close rescue nil
       bad_server.close rescue nil
       good_server.close rescue nil
+    end
+  end
+
+  # ── SMB2 message signing ──────────────────────────────────────────────────────
+
+  describe "#run — SMB2 signing" do
+    # Full handshake that also returns the SMB2 signing key — derived through the
+    # server's own Challenge.validate (the same code path the server uses), so no
+    # crypto is re-implemented in the test — plus the raw round-2 response.
+    def full_auth_with_key(client, security_mode: 1)
+      write_smb2_request(client, command: C::Commands::NEGOTIATE, body: negotiate_request_body, message_id: 1)
+      read_smb2_response(client)
+
+      write_smb2_request(client, command: C::Commands::SESSION_SETUP,
+                                 body: session_setup_request_body(build_type1_spnego, security_mode: security_mode),
+                                 message_id: 2, session_id: 0)
+      round1 = read_smb2_response(client)
+      sid    = round1[:header].session_id
+
+      r1  = SambaDave::Protocol::Commands::SessionSetupResponse.read(round1[:body])
+      t2b = SambaDave::NTLM::SPNEGO.unwrap(r1.security_buffer)
+      t2  = Net::NTLM::Message.parse(t2b)
+      server_challenge = [t2[:challenge].value].pack("Q<")
+      t3_bytes = t2.response({ user: "alice", password: "wonderland", domain: "" }, ntlmv2: true).serialize.b
+      key = SambaDave::NTLM::Challenge.validate(t3_bytes, server_challenge: server_challenge, password: "wonderland").session_key
+
+      write_smb2_request(client, command: C::Commands::SESSION_SETUP,
+                                 body: session_setup_request_body(build_spnego_neg_token_resp(t3_bytes), security_mode: security_mode),
+                                 message_id: 3, session_id: sid)
+      round2 = read_smb2_response(client)
+      { session_id: sid, key: key, round2: round2 }
+    end
+
+    # Write a signed request. If a block is given it may mutate the signed bytes
+    # (e.g. to tamper) before they are sent.
+    def write_signed_request(client, command:, body:, message_id:, session_id:, key:)
+      header = SambaDave::Protocol::Header.new(command: command, message_id: message_id, session_id: session_id)
+      header.flags = header.flags | C::Flags::SIGNED
+      msg = header.to_binary_s + body.b
+      msg[48, 16] = SambaDave::MessageSigner.sign(key, msg)
+      msg = yield(msg) if block_given?
+      SambaDave::Protocol::Transport.write_message(client, msg)
+    end
+
+    let(:echo_body) { [4, 0].pack("S<S<") }
+
+    it "signs the final SESSION_SETUP success response" do
+      with_connected_server(server) do |client|
+        auth = full_auth_with_key(client)
+        expect(auth[:round2][:header].flags & C::Flags::SIGNED).not_to eq(0)
+        expect(SambaDave::MessageSigner.verify(auth[:key], auth[:round2][:raw])).to be true
+      end
+    end
+
+    it "accepts a correctly signed request and signs its response" do
+      with_connected_server(server) do |client|
+        auth = full_auth_with_key(client)
+        write_signed_request(client, command: C::Commands::ECHO, body: echo_body,
+                             message_id: 10, session_id: auth[:session_id], key: auth[:key])
+        resp = read_smb2_response(client)
+        expect(resp[:header].status).to eq(C::Status::SUCCESS)
+        expect(resp[:header].flags & C::Flags::SIGNED).not_to eq(0)
+        expect(SambaDave::MessageSigner.verify(auth[:key], resp[:raw])).to be true
+      end
+    end
+
+    it "rejects a request with a tampered signature (ACCESS_DENIED)" do
+      with_connected_server(server) do |client|
+        auth = full_auth_with_key(client)
+        write_signed_request(client, command: C::Commands::ECHO, body: echo_body,
+                             message_id: 10, session_id: auth[:session_id], key: auth[:key]) do |msg|
+          msg[48] = (msg[48].ord ^ 0xFF).chr.b  # flip one signature byte
+          msg
+        end
+        resp = read_smb2_response(client)
+        expect(resp[:header].status).to eq(C::Status::ACCESS_DENIED)
+      end
+    end
+
+    context "when the client negotiated SIGNING_REQUIRED" do
+      it "rejects an unsigned request with ACCESS_DENIED" do
+        with_connected_server(server) do |client|
+          auth = full_auth_with_key(client, security_mode: C::SecurityMode::SIGNING_REQUIRED)
+          write_smb2_request(client, command: C::Commands::ECHO, body: echo_body,
+                             message_id: 10, session_id: auth[:session_id])
+          resp = read_smb2_response(client)
+          expect(resp[:header].status).to eq(C::Status::ACCESS_DENIED)
+        end
+      end
+
+      it "accepts a correctly signed request" do
+        with_connected_server(server) do |client|
+          auth = full_auth_with_key(client, security_mode: C::SecurityMode::SIGNING_REQUIRED)
+          write_signed_request(client, command: C::Commands::ECHO, body: echo_body,
+                               message_id: 10, session_id: auth[:session_id], key: auth[:key])
+          resp = read_smb2_response(client)
+          expect(resp[:header].status).to eq(C::Status::SUCCESS)
+        end
+      end
     end
   end
 end

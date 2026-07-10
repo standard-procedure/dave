@@ -88,7 +88,7 @@ module SambaDave
 
           if authenticator.pending_challenge?(session_id)
             # Round 2: client is sending Type3 AUTHENTICATE
-            handle_round2(session_id, security_buffer, authenticator, sessions)
+            handle_round2(session_id, security_buffer, authenticator, sessions, request.security_mode)
           else
             # Round 1: client is sending Type1 NEGOTIATE (or first-time)
             handle_round1(session_id, security_buffer, authenticator)
@@ -116,13 +116,16 @@ module SambaDave
           }
         end
 
-        def self.handle_round2(session_id, security_buffer, authenticator, sessions)
-          identity = authenticator.complete_auth(session_id, security_buffer)
+        def self.handle_round2(session_id, security_buffer, authenticator, sessions, security_mode = 0)
+          auth = authenticator.complete_auth(session_id, security_buffer)
 
-          if identity
-            # Authentication succeeded — create the session
+          if auth
+            # Authentication succeeded — create the session and install the
+            # signing key derived from the NTLMv2 exchange.
             session = Session.new(session_id: session_id)
-            session.authenticate!(identity)
+            session.authenticate!(auth.identity)
+            session.set_session_key(auth.session_key)
+            session.signing_required = (security_mode & Constants::SecurityMode::SIGNING_REQUIRED) != 0
             sessions[session_id] = session
 
             response = SessionSetupResponse.new(

@@ -23,13 +23,17 @@ module SambaDave
   class Session
     attr_reader :session_id, :user_identity, :signing_key
     attr_accessor :session_key
+    # Whether the client negotiated SMB2_NEGOTIATE_SIGNING_REQUIRED for this
+    # session; when true, the server rejects unsigned requests on it.
+    attr_writer :signing_required
 
     # @param session_id [Integer] 8-byte session identifier
     def initialize(session_id:)
-      @session_id     = session_id
-      @user_identity  = nil
-      @session_key    = nil
-      @signing_key    = nil
+      @session_id       = session_id
+      @user_identity    = nil
+      @session_key      = nil
+      @signing_key      = nil
+      @signing_required = false
       @authenticated  = false
       @tree_connects  = {}   # tree_id (Integer) → TreeConnect
       @next_tree_id   = 1
@@ -52,15 +56,26 @@ module SambaDave
       @authenticated
     end
 
-    # Derive and cache the signing key from the session key.
-    # SigningKey = HMAC-SHA256(SessionKey, "SMBSigningKey\x00")
-    # Called once after session_key is set.
+    # @return [Boolean] true if the client required signing for this session
+    def signing_required?
+      @signing_required
+    end
+
+    # Install the SMB2 session key and its signing key.
     #
-    # @param key [String] 16-byte NTLM session base key
+    # For SMB dialects 2.0.2 and 2.1 (what this server negotiates), MS-SMB2
+    # defines Session.SigningKey to be Session.SessionKey itself — no KDF. The
+    # SessionKey is the first 16 bytes of the GSS/NTLM key, right-padded with
+    # zeroes if shorter. (The HMAC-SHA256 "SMBSigningKey" derivation is an
+    # SMB 3.1.1 construction and must NOT be applied here.)
+    #
+    # @param key [String, nil] the NTLM ExportedSessionKey (16 bytes)
     def set_session_key(key)
-      require "openssl"
       @session_key = key
-      @signing_key = OpenSSL::HMAC.digest("SHA256", key, "SMBSigningKey\x00") if key
+      @signing_key = if key
+        bytes = key.b
+        bytes.bytesize >= 16 ? bytes.byteslice(0, 16) : bytes + ("\x00".b * (16 - bytes.bytesize))
+      end
     end
 
     # ── Credit Management ────────────────────────────────────────────────────

@@ -129,30 +129,17 @@ RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
   describe "SambaDave::MessageSigner" do
     before { require "samba_dave/message_signer" }
 
-    let(:session_key) { "S" * 16 }
+    # For SMB 2.0.2/2.1 the signing key is the 16-byte session key itself.
+    let(:signing_key) { "S" * 16 }
     let(:signer)      { SambaDave::MessageSigner }
 
-    it "derives a signing key from the session key using HMAC-SHA256" do
-      key = signer.derive_signing_key(session_key)
-      expect(key).to be_a(String)
-      expect(key.bytesize).to eq(32)  # SHA-256 output
-    end
-
-    it "derives different signing keys for different session keys" do
-      key1 = signer.derive_signing_key("A" * 16)
-      key2 = signer.derive_signing_key("B" * 16)
-      expect(key1).not_to eq(key2)
-    end
-
     it "produces a 16-byte signature" do
-      signing_key = signer.derive_signing_key(session_key)
-      message     = ("X" * 64).b  # 64-byte fake SMB2 message
-      sig         = signer.sign(signing_key, message)
+      message = ("X" * 64).b  # 64-byte fake SMB2 message
+      sig     = signer.sign(signing_key, message)
       expect(sig.bytesize).to eq(16)
     end
 
     it "zeroes the signature field (bytes 48-63) before computing HMAC" do
-      signing_key = signer.derive_signing_key(session_key)
       # Two messages identical except for signature bytes (48-63) — same computed sig
       msg_a = ("X" * 48 + "A" * 16).b
       msg_b = ("X" * 48 + "B" * 16).b
@@ -160,8 +147,7 @@ RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
     end
 
     it "verifies a correctly signed message" do
-      signing_key = signer.derive_signing_key(session_key)
-      message     = "H" * 64
+      message = "H" * 64
 
       sig = signer.sign(signing_key, message)
       msg_with_sig = message.b.dup
@@ -171,8 +157,7 @@ RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
     end
 
     it "rejects a tampered message payload" do
-      signing_key = signer.derive_signing_key(session_key)
-      message     = "H" * 64
+      message = "H" * 64
 
       sig = signer.sign(signing_key, message)
       msg_with_sig = message.b.dup
@@ -183,8 +168,7 @@ RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
     end
 
     it "rejects a message with a tampered signature" do
-      signing_key = signer.derive_signing_key(session_key)
-      message     = "H" * 64
+      message = "H" * 64
 
       sig = signer.sign(signing_key, message)
       msg_with_sig = message.b.dup
@@ -195,7 +179,6 @@ RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
     end
 
     it "signature differs for different messages" do
-      signing_key = signer.derive_signing_key(session_key)
       sig1 = signer.sign(signing_key, "A" * 64)
       sig2 = signer.sign(signing_key, "B" * 64)
       expect(sig1).not_to eq(sig2)
