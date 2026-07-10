@@ -2,9 +2,15 @@
 
 require "net/ntlm"
 require "openssl"
+require "samba_dave/ntlm/session_key"
 
 module SambaDave
   module NTLM
+    # Result of a successful Type3 validation: the authenticated username plus
+    # the 16-byte SMB2 session key (NTLMv2 ExportedSessionKey) derived from the
+    # exchange. Returned by Challenge.validate; nil is returned on failure.
+    Result = Data.define(:username, :session_key)
+
     # Builds NTLM Type2 challenge messages and validates Type3 authenticate messages.
     #
     # ## NTLMv2 Protocol Overview
@@ -115,8 +121,18 @@ module SambaDave
         # Step 4: Constant-time comparison
         return nil unless OpenSSL.fixed_length_secure_compare(expected.b, nt_proof_str.b)
 
-        # Return the decoded username on success
-        username_str
+        # Step 5: Derive the SMB2 session key (NTLMv2 ExportedSessionKey) from
+        # the same material. ntlmv2_hash is ResponseKeyNT; nt_proof_str is the
+        # verified proof. Honour NEGOTIATE_KEY_EXCH by RC4-decrypting the Type3's
+        # EncryptedRandomSessionKey when the client set that flag (Windows does).
+        session_key = SessionKey.derive_exported_session_key(
+          response_key_nt: ntlmv2_hash,
+          nt_proof_str: nt_proof_str,
+          encrypted_random_session_key: type3.session_key.to_s.b,
+          key_exchange: type3.has_flag?(:KEY_EXCHANGE)
+        )
+
+        Result.new(username: username_str, session_key: session_key)
       rescue
         nil
       end

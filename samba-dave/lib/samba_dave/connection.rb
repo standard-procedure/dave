@@ -22,6 +22,7 @@ require "samba_dave/protocol/commands/ioctl"
 require "samba_dave/protocol/commands/lock"
 require "samba_dave/protocol/commands/change_notify"
 require "samba_dave/authenticator"
+require "samba_dave/message_signer"
 require "samba_dave/session"
 require "samba_dave/tree_connect"
 require "samba_dave/open_file"
@@ -111,11 +112,19 @@ module SambaDave
       end
 
       start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      response_result = begin
-        dispatch(request_header, raw[64..] || "")
-      rescue => e
-        # Truncated/malformed body: return INVALID_PARAMETER rather than crashing
-        { status: C::Status::INVALID_PARAMETER, body: "" }
+      # On a keyed session, enforce signing before doing any work: verify a
+      # signed request's signature, and reject an unsigned one if the session
+      # negotiated SIGNING_REQUIRED. Pre-auth traffic has no key and is skipped.
+      signing_error = signing_violation(request_header, raw)
+      response_result = if signing_error
+        signing_error
+      else
+        begin
+          dispatch(request_header, raw[64..] || "")
+        rescue => e
+          # Truncated/malformed body: return INVALID_PARAMETER rather than crashing
+          { status: C::Status::INVALID_PARAMETER, body: "" }
+        end
       end
       duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time) * 1000).round(2)
 
@@ -138,7 +147,27 @@ module SambaDave
         tree_id:      response_tree_id,
         command_hint: command_hint
       )
-      send_response(response_header, response_body)
+      # Sign the response when the owning session has a key. For SESSION_SETUP
+      # the session lives under the (possibly newly allocated) response session
+      # id; for everything else it's the request's session id.
+      signing_session = @sessions[response_session_id || request_header.session_id]
+      send_response(response_header, response_body, signing_session)
+    end
+
+    # If the request breaks the session's signing rules, return an error result
+    # to send instead of dispatching; otherwise nil. Only applies once a session
+    # has a signing key (i.e. after SESSION_SETUP completes).
+    def signing_violation(request_header, raw)
+      session = @sessions[request_header.session_id]
+      return nil unless session&.signing_key
+
+      signed = (request_header.flags & C::Flags::SIGNED) != 0
+      if signed
+        return { status: C::Status::ACCESS_DENIED, body: "" } unless MessageSigner.verify(session.signing_key, raw)
+      elsif session.signing_required?
+        return { status: C::Status::ACCESS_DENIED, body: "" }
+      end
+      nil
     end
 
     # Dispatch to the correct command handler.
@@ -439,12 +468,26 @@ module SambaDave
       session&.authenticated?
     end
 
-    # Serialise and write a response.
-    def send_response(header, body)
+    # Serialise and write a response, signing it when the owning session has a
+    # signing key.
+    def send_response(header, body, session = nil)
       message = header.to_binary_s + (body || "")
+      message = sign_message(message, session.signing_key) if session&.signing_key
       Protocol::Transport.write_message(@socket, message)
     rescue IOError, Errno::EPIPE, Errno::ECONNRESET
       # Client disconnected — swallow
+    end
+
+    # Return a copy of the serialised message with the SMB2_FLAGS_SIGNED flag set
+    # (Flags at bytes 16-19) and the Signature field (bytes 48-63) populated. The
+    # signature is computed over the message with the flag set and the signature
+    # field zeroed, per MS-SMB2.
+    def sign_message(message, signing_key)
+      msg = message.b.dup
+      flags = msg[16, 4].unpack1("L<") | C::Flags::SIGNED
+      msg[16, 4] = [flags].pack("L<")
+      msg[48, 16] = MessageSigner.sign(signing_key, msg)
+      msg
     end
   end
 end

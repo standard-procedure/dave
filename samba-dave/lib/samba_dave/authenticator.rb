@@ -29,6 +29,10 @@ module SambaDave
   #   - If invalid: returns nil
   #
   class Authenticator
+    # Result of a successful Round 2: the app's user identity plus the 16-byte
+    # SMB2 session key derived from the NTLMv2 exchange (used for signing).
+    AuthResult = Data.define(:identity, :session_key)
+
     # @param security_provider [SecurityProvider] the app's credential store
     def initialize(security_provider)
       @provider  = security_provider
@@ -69,19 +73,22 @@ module SambaDave
       type3_bytes = NTLM::SPNEGO.unwrap(security_buffer)
       return nil unless type3_bytes
 
-      # Validate Type3 and extract username
-      username = NTLM::Challenge.validate(
+      # Validate Type3; on success this also yields the SMB2 session key.
+      validation = NTLM::Challenge.validate(
         type3_bytes,
         server_challenge: server_challenge,
         password: @provider.credential_for(extract_username_from_type3(type3_bytes))
       )
-      return nil unless username
+      return nil unless validation
 
       # Retrieve password and call provider.authenticate for the identity
-      password = @provider.credential_for(username)
+      password = @provider.credential_for(validation.username)
       return nil unless password
 
-      @provider.authenticate(username, password)
+      identity = @provider.authenticate(validation.username, password)
+      return nil unless identity
+
+      AuthResult.new(identity: identity, session_key: validation.session_key)
     end
 
     # @return [Boolean] true if a pending challenge exists for this session
