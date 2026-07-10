@@ -84,8 +84,36 @@ RSpec.describe SambaDave::Protocol::Commands::Negotiate do
       expect(resp.dialect_revision).to eq(0x0202)
     end
 
-    it "selects SMB 2.1 (0x0210) when multiple dialects including 0x0210 are offered" do
-      raw = build_negotiate_request_binary(dialects: [0x0202, 0x0210, 0x0302, 0x0311])
+    it "selects SMB 3.0.2 (0x0302) as the highest supported when offered" do
+      raw = build_negotiate_request_binary(dialects: [0x0202, 0x0210, 0x0300, 0x0302, 0x0311])
+      request = SambaDave::Protocol::Commands::NegotiateRequest.read(raw)
+      response_body = handler.handle(request, server_guid: server_guid)
+      resp = SambaDave::Protocol::Commands::NegotiateResponse.read(response_body)
+
+      expect(resp.dialect_revision).to eq(0x0302)
+    end
+
+    it "selects SMB 3.0 (0x0300) when it is the highest supported offered" do
+      raw = build_negotiate_request_binary(dialects: [0x0202, 0x0210, 0x0300])
+      request = SambaDave::Protocol::Commands::NegotiateRequest.read(raw)
+      response_body = handler.handle(request, server_guid: server_guid)
+      resp = SambaDave::Protocol::Commands::NegotiateResponse.read(response_body)
+
+      expect(resp.dialect_revision).to eq(0x0300)
+    end
+
+    it "selects SMB 2.1 when no 3.x dialect is offered" do
+      raw = build_negotiate_request_binary(dialects: [0x0202, 0x0210])
+      request = SambaDave::Protocol::Commands::NegotiateRequest.read(raw)
+      response_body = handler.handle(request, server_guid: server_guid)
+      resp = SambaDave::Protocol::Commands::NegotiateResponse.read(response_body)
+
+      expect(resp.dialect_revision).to eq(0x0210)
+    end
+
+    it "downgrades below an unsupported 3.1.1-only-plus-2.x offer" do
+      # We don't offer 3.1.1 yet, so the highest we support here is 2.1.
+      raw = build_negotiate_request_binary(dialects: [0x0202, 0x0210, 0x0311])
       request = SambaDave::Protocol::Commands::NegotiateRequest.read(raw)
       response_body = handler.handle(request, server_guid: server_guid)
       resp = SambaDave::Protocol::Commands::NegotiateResponse.read(response_body)

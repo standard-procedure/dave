@@ -39,9 +39,9 @@ RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
       expect(resp.dialect_revision).to eq(0x0210)
     end
 
-    it "selects SMB 2.0.2 when only higher dialects and 0x0202 offered (no 0x0210)" do
+    it "selects the highest supported dialect (SMB 3.0.2) when 3.x is offered" do
       resp = negotiate_response(dialects: [0x0202, 0x0300, 0x0302])
-      expect(resp.dialect_revision).to eq(0x0202)
+      expect(resp.dialect_revision).to eq(0x0302)
     end
 
     it "full NEGOTIATE flow works with SMB 2.1" do
@@ -182,6 +182,33 @@ RSpec.describe "Phase 6 — Hardening + SMB 2.1 Dialect" do
       sig1 = signer.sign(signing_key, "A" * 64)
       sig2 = signer.sign(signing_key, "B" * 64)
       expect(sig1).not_to eq(sig2)
+    end
+
+    context "with the SMB 3.x AES-CMAC algorithm" do
+      it "produces a 16-byte signature and verifies a correctly signed message" do
+        message = "H" * 64
+        sig = signer.sign(signing_key, message, algorithm: :aes_cmac)
+        expect(sig.bytesize).to eq(16)
+
+        msg_with_sig = message.b.dup
+        msg_with_sig[48, 16] = sig
+        expect(signer.verify(signing_key, msg_with_sig, algorithm: :aes_cmac)).to be true
+      end
+
+      it "rejects a tampered message" do
+        message = "H" * 64
+        sig = signer.sign(signing_key, message, algorithm: :aes_cmac)
+        msg_with_sig = message.b.dup
+        msg_with_sig[48, 16] = sig
+        msg_with_sig[0] = "\xFF".b
+        expect(signer.verify(signing_key, msg_with_sig, algorithm: :aes_cmac)).to be false
+      end
+
+      it "differs from the HMAC-SHA256 signature over the same message" do
+        message = "H" * 64
+        expect(signer.sign(signing_key, message, algorithm: :aes_cmac))
+          .not_to eq(signer.sign(signing_key, message, algorithm: :hmac_sha256))
+      end
     end
   end
 

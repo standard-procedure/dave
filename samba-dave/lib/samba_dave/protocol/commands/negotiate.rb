@@ -180,23 +180,30 @@ module SambaDave
           (now.to_i * 10_000_000) + (now.nsec / 100) + Constants::FILETIME_EPOCH_DIFF
         end
 
+        # Select the highest supported dialect from those the client offered.
+        # Preference: SMB 3.0.2 > 3.0 > 2.1 > 2.0.2. (SMB 3.1.1 needs negotiate
+        # contexts + pre-auth integrity and is not offered yet.) Falls back to
+        # 2.0.2 when nothing supported is offered.
+        #
+        # @param dialects [Array<Integer>] dialect revisions offered by the client
+        # @return [Integer] the selected dialect revision
+        def self.select_dialect(dialects)
+          preference = [
+            Constants::Dialects::SMB3_0_2,
+            Constants::Dialects::SMB3_0,
+            Constants::Dialects::SMB2_1,
+            Constants::Dialects::SMB2_0_2
+          ]
+          preference.find { |dialect| dialects.include?(dialect) } || Constants::Dialects::SMB2_0_2
+        end
+
         # Handle a parsed NegotiateRequest.
         #
         # @param request [NegotiateRequest] parsed NEGOTIATE request body
         # @param server_guid [String] 16-byte server GUID
         # @return [String] serialised NegotiateResponse body (binary)
         def self.handle(request, server_guid:)
-          # Select the highest supported dialect offered by the client.
-          # Preference: SMB 2.1 > SMB 2.0.2 (Phase 6+)
-          dialects = request.dialects.to_a
-          selected = if dialects.include?(Constants::Dialects::SMB2_1)
-            Constants::Dialects::SMB2_1
-          elsif dialects.include?(Constants::Dialects::SMB2_0_2)
-            Constants::Dialects::SMB2_0_2
-          else
-            # Fall back to SMB 2.0.2 if no supported dialect offered
-            Constants::Dialects::SMB2_0_2
-          end
+          selected = select_dialect(request.dialects.to_a)
 
           spnego_token = SPNEGO.neg_token_init
 

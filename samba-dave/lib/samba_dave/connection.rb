@@ -78,6 +78,7 @@ module SambaDave
       @next_session_id = SecureRandom.random_number(2**31) + 1  # non-zero start
       @open_file_table = OpenFileTable.new  # connection-scoped handle table
       @logger          = server.logger    # may be nil (no logging)
+      @dialect         = C::Dialects::SMB2_0_2  # negotiated in handle_negotiate
     end
 
     # Run the connection message loop (blocking).
@@ -171,7 +172,9 @@ module SambaDave
 
       signed = (request_header.flags & C::Flags::SIGNED) != 0
       if signed
-        return { status: C::Status::ACCESS_DENIED, body: "" } unless MessageSigner.verify(session.signing_key, raw)
+        unless MessageSigner.verify(session.signing_key, raw, algorithm: session.signing_algorithm)
+          return { status: C::Status::ACCESS_DENIED, body: "" }
+        end
       elsif session.signing_required?
         return { status: C::Status::ACCESS_DENIED, body: "" }
       end
@@ -257,6 +260,7 @@ module SambaDave
     def handle_negotiate(body)
       request = Protocol::Commands::NegotiateRequest.read(body)
       @state = :negotiated
+      @dialect = Protocol::Commands::Negotiate.select_dialect(request.dialects.to_a)
       response_body = Protocol::Commands::Negotiate.handle(
         request,
         server_guid: @server.server_guid
@@ -287,7 +291,8 @@ module SambaDave
         body,
         session_id:    effective_session_id,
         authenticator: @authenticator,
-        sessions:      @sessions
+        sessions:      @sessions,
+        dialect:       @dialect
       )
 
       # Always include the (allocated or reused) session_id in the response header
@@ -480,7 +485,7 @@ module SambaDave
     # signing key.
     def send_response(header, body, session = nil)
       message = header.to_binary_s + (body || "")
-      message = sign_message(message, session.signing_key) if session&.signing_key
+      message = sign_message(message, session.signing_key, session.signing_algorithm) if session&.signing_key
       Protocol::Transport.write_message(@socket, message)
     rescue IOError, Errno::EPIPE, Errno::ECONNRESET
       # Client disconnected — swallow
@@ -489,12 +494,12 @@ module SambaDave
     # Return a copy of the serialised message with the SMB2_FLAGS_SIGNED flag set
     # (Flags at bytes 16-19) and the Signature field (bytes 48-63) populated. The
     # signature is computed over the message with the flag set and the signature
-    # field zeroed, per MS-SMB2.
-    def sign_message(message, signing_key)
+    # field zeroed, using the session's negotiated MAC (HMAC-SHA256 or AES-CMAC).
+    def sign_message(message, signing_key, algorithm)
       msg = message.b.dup
       flags = msg[16, 4].unpack1("L<") | C::Flags::SIGNED
       msg[16, 4] = [flags].pack("L<")
-      msg[48, 16] = MessageSigner.sign(signing_key, msg)
+      msg[48, 16] = MessageSigner.sign(signing_key, msg, algorithm: algorithm)
       msg
     end
   end

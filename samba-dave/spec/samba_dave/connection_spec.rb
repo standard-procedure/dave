@@ -195,13 +195,13 @@ RSpec.describe SambaDave::Connection do
       expect(resp_header.message_id).to eq(42)
     end
 
-    it "selects SMB 2.1 (0x0210) dialect when 0x0210 is among offered dialects" do
+    it "selects the highest supported dialect (SMB 3.0.2) among those offered" do
       response_data = run_with_frame(negotiate_request_frame(dialects: [0x0202, 0x0210, 0x0302]))
       response_io   = StringIO.new(response_data)
       raw_msg       = SambaDave::Protocol::Transport.read_message(response_io)
       resp_body     = SambaDave::Protocol::Commands::NegotiateResponse.read(raw_msg[64..])
 
-      expect(resp_body.dialect_revision).to eq(0x0210)
+      expect(resp_body.dialect_revision).to eq(0x0302)
     end
 
     it "includes a security buffer (SPNEGO token) in the response" do
@@ -903,8 +903,8 @@ RSpec.describe SambaDave::Connection do
     # Full handshake that also returns the SMB2 signing key — derived through the
     # server's own Challenge.validate (the same code path the server uses), so no
     # crypto is re-implemented in the test — plus the raw round-2 response.
-    def full_auth_with_key(client, security_mode: 1)
-      write_smb2_request(client, command: C::Commands::NEGOTIATE, body: negotiate_request_body, message_id: 1)
+    def full_auth_with_key(client, security_mode: 1, dialects: [0x0202])
+      write_smb2_request(client, command: C::Commands::NEGOTIATE, body: negotiate_request_body(dialects: dialects), message_id: 1)
       read_smb2_response(client)
 
       write_smb2_request(client, command: C::Commands::SESSION_SETUP,
@@ -920,20 +920,27 @@ RSpec.describe SambaDave::Connection do
       t3_bytes = t2.response({ user: "alice", password: "wonderland", domain: "" }, ntlmv2: true).serialize.b
       key = SambaDave::NTLM::Challenge.validate(t3_bytes, server_challenge: server_challenge, password: "wonderland").session_key
 
+      # Derive the signing key + MAC exactly as the server does for the
+      # negotiated dialect, by reusing Session (no crypto re-implemented here).
+      selected = SambaDave::Protocol::Commands::Negotiate.select_dialect(dialects)
+      derived  = SambaDave::Session.new(session_id: sid)
+      derived.set_session_key(key, dialect: selected)
+
       write_smb2_request(client, command: C::Commands::SESSION_SETUP,
                                  body: session_setup_request_body(build_spnego_neg_token_resp(t3_bytes), security_mode: security_mode),
                                  message_id: 3, session_id: sid)
       round2 = read_smb2_response(client)
-      { session_id: sid, key: key, round2: round2 }
+      { session_id: sid, key: key, signing_key: derived.signing_key,
+        algorithm: derived.signing_algorithm, round2: round2 }
     end
 
     # Write a signed request. If a block is given it may mutate the signed bytes
     # (e.g. to tamper) before they are sent.
-    def write_signed_request(client, command:, body:, message_id:, session_id:, key:)
+    def write_signed_request(client, command:, body:, message_id:, session_id:, key:, algorithm: :hmac_sha256)
       header = SambaDave::Protocol::Header.new(command: command, message_id: message_id, session_id: session_id)
       header.flags = header.flags | C::Flags::SIGNED
       msg = header.to_binary_s + body.b
-      msg[48, 16] = SambaDave::MessageSigner.sign(key, msg)
+      msg[48, 16] = SambaDave::MessageSigner.sign(key, msg, algorithm: algorithm)
       msg = yield(msg) if block_given?
       SambaDave::Protocol::Transport.write_message(client, msg)
     end
@@ -991,6 +998,47 @@ RSpec.describe SambaDave::Connection do
                                message_id: 10, session_id: auth[:session_id], key: auth[:key])
           resp = read_smb2_response(client)
           expect(resp[:header].status).to eq(C::Status::SUCCESS)
+        end
+      end
+    end
+
+    context "over an SMB 3.0 session" do
+      # Offer 3.x so the server negotiates SMB 3.0.2 and signs with AES-CMAC.
+      let(:smb3_dialects) { [0x0202, 0x0210, 0x0300, 0x0302] }
+
+      it "uses AES-CMAC and signs the final SESSION_SETUP success response" do
+        with_connected_server(server) do |client|
+          auth = full_auth_with_key(client, dialects: smb3_dialects)
+          expect(auth[:algorithm]).to eq(:aes_cmac)
+          expect(auth[:round2][:header].flags & C::Flags::SIGNED).not_to eq(0)
+          expect(SambaDave::MessageSigner.verify(auth[:signing_key], auth[:round2][:raw], algorithm: :aes_cmac)).to be true
+        end
+      end
+
+      it "accepts a CMAC-signed request and signs its response with CMAC" do
+        with_connected_server(server) do |client|
+          auth = full_auth_with_key(client, dialects: smb3_dialects)
+          write_signed_request(client, command: C::Commands::ECHO, body: echo_body,
+                               message_id: 10, session_id: auth[:session_id],
+                               key: auth[:signing_key], algorithm: :aes_cmac)
+          resp = read_smb2_response(client)
+          expect(resp[:header].status).to eq(C::Status::SUCCESS)
+          expect(resp[:header].flags & C::Flags::SIGNED).not_to eq(0)
+          expect(SambaDave::MessageSigner.verify(auth[:signing_key], resp[:raw], algorithm: :aes_cmac)).to be true
+        end
+      end
+
+      it "rejects a CMAC request with a tampered signature (ACCESS_DENIED)" do
+        with_connected_server(server) do |client|
+          auth = full_auth_with_key(client, dialects: smb3_dialects)
+          write_signed_request(client, command: C::Commands::ECHO, body: echo_body,
+                               message_id: 10, session_id: auth[:session_id],
+                               key: auth[:signing_key], algorithm: :aes_cmac) do |msg|
+            msg[48] = (msg[48].ord ^ 0xFF).chr.b
+            msg
+          end
+          resp = read_smb2_response(client)
+          expect(resp[:header].status).to eq(C::Status::ACCESS_DENIED)
         end
       end
     end

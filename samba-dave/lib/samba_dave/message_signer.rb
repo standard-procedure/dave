@@ -1,17 +1,24 @@
 # frozen_string_literal: true
 
 require "openssl"
+require "samba_dave/crypto/cmac"
 
 module SambaDave
-  # SMB2 message signing and verification using HMAC-SHA256.
+  # SMB2/3 message signing and verification.
   #
-  # ## Signing Key (SMB 2.0.2 / 2.1)
+  # ## Signing algorithm (per dialect)
   #
-  # For these dialects MS-SMB2 defines Session.SigningKey to be the session key
-  # itself — the 16-byte NTLM ExportedSessionKey, with no KDF. (The SP800-108
-  # KDF over an "SMBSigningKey" label is an SMB 3.1.1 construction and does not
-  # apply here.) Session#set_session_key installs that key; callers pass it
-  # straight to #sign / #verify below.
+  # The MAC depends on the negotiated dialect: SMB 2.0.2/2.1 use HMAC-SHA256,
+  # SMB 3.x use AES-128-CMAC. #sign / #verify take an `algorithm:` selecting
+  # between them (:hmac_sha256 default, :aes_cmac for SMB 3.x). The signature is
+  # always the first 16 bytes.
+  #
+  # ## Signing Key
+  #
+  # For SMB 2.0.2/2.1, Session.SigningKey is the 16-byte session key itself (no
+  # KDF). For SMB 3.x it is derived from the session key via the SP800-108 KDF
+  # (see Session#set_session_key / Crypto::KDF). Either way the resulting key is
+  # passed straight to #sign / #verify.
   #
   # ## Signature Computation
   #
@@ -38,12 +45,22 @@ module SambaDave
     #
     # @param signing_key [String] the session's 16-byte SigningKey (see Session#set_session_key)
     # @param message [String] full SMB2 message binary (header + body)
+    # @param algorithm [Symbol] :hmac_sha256 (SMB 2.x) or :aes_cmac (SMB 3.x)
     # @return [String] 16-byte binary signature
-    def self.sign(signing_key, message)
+    def self.sign(signing_key, message, algorithm: :hmac_sha256)
       msg = message.b.dup
-      # Zero out the signature field before computing HMAC
+      # Zero out the signature field before computing the MAC
       msg[SIGNATURE_OFFSET, SIGNATURE_LENGTH] = "\x00" * SIGNATURE_LENGTH
-      OpenSSL::HMAC.digest("SHA256", signing_key.b, msg)[0, SIGNATURE_LENGTH]
+      mac(algorithm, signing_key.b, msg)[0, SIGNATURE_LENGTH]
+    end
+
+    # Compute the raw MAC for the negotiated dialect's signing algorithm.
+    def self.mac(algorithm, key, message)
+      case algorithm
+      when :hmac_sha256 then OpenSSL::HMAC.digest("SHA256", key, message)
+      when :aes_cmac then Crypto::CMAC.digest(key, message)
+      else raise ArgumentError, "unknown signing algorithm: #{algorithm.inspect}"
+      end
     end
 
     # Verify the signature in an SMB2 message.
@@ -53,12 +70,13 @@ module SambaDave
     #
     # @param signing_key [String] the session's 16-byte SigningKey (see Session#set_session_key)
     # @param message [String] full SMB2 message binary (header + body) with signature embedded
+    # @param algorithm [Symbol] :hmac_sha256 (SMB 2.x) or :aes_cmac (SMB 3.x)
     # @return [Boolean] true if valid, false if invalid or message is too short
-    def self.verify(signing_key, message)
+    def self.verify(signing_key, message, algorithm: :hmac_sha256)
       return false if message.bytesize < SIGNATURE_OFFSET + SIGNATURE_LENGTH
 
       received_sig = message.b[SIGNATURE_OFFSET, SIGNATURE_LENGTH]
-      expected_sig = sign(signing_key, message)
+      expected_sig = sign(signing_key, message, algorithm: algorithm)
       OpenSSL.fixed_length_secure_compare(received_sig, expected_sig)
     rescue
       false

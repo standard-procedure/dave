@@ -82,13 +82,13 @@ module SambaDave
         # @param authenticator [Authenticator] the connection's authenticator
         # @param sessions [Hash] session_id → Session mapping (mutated on success)
         # @return [Hash] { status: Integer, body: String }
-        def self.handle(body, session_id:, authenticator:, sessions:)
+        def self.handle(body, session_id:, authenticator:, sessions:, dialect: Constants::Dialects::SMB2_1)
           request = SessionSetupRequest.read(body)
           security_buffer = request.security_buffer.b
 
           if authenticator.pending_challenge?(session_id)
             # Round 2: client is sending Type3 AUTHENTICATE
-            handle_round2(session_id, security_buffer, authenticator, sessions, request.security_mode)
+            handle_round2(session_id, security_buffer, authenticator, sessions, request.security_mode, dialect)
           else
             # Round 1: client is sending Type1 NEGOTIATE (or first-time)
             handle_round1(session_id, security_buffer, authenticator)
@@ -116,15 +116,16 @@ module SambaDave
           }
         end
 
-        def self.handle_round2(session_id, security_buffer, authenticator, sessions, security_mode = 0)
+        def self.handle_round2(session_id, security_buffer, authenticator, sessions, security_mode = 0, dialect = Constants::Dialects::SMB2_1)
           auth = authenticator.complete_auth(session_id, security_buffer)
 
           if auth
             # Authentication succeeded — create the session and install the
-            # signing key derived from the NTLMv2 exchange.
+            # signing key derived from the NTLMv2 exchange (per the negotiated
+            # dialect: raw key for SMB 2.x, SMB3 KDF for 3.x).
             session = Session.new(session_id: session_id)
             session.authenticate!(auth.identity)
-            session.set_session_key(auth.session_key)
+            session.set_session_key(auth.session_key, dialect: dialect)
             session.signing_required = (security_mode & Constants::SecurityMode::SIGNING_REQUIRED) != 0
             sessions[session_id] = session
 
