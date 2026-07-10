@@ -36,7 +36,7 @@ module SambaDave
     # The signature field in the message is zeroed before computing the HMAC.
     # The result is the first 16 bytes of the HMAC-SHA256 output.
     #
-    # @param signing_key [String] signing key (from derive_signing_key)
+    # @param signing_key [String] the session's 16-byte SigningKey (see Session#set_session_key)
     # @param message [String] full SMB2 message binary (header + body)
     # @return [String] 16-byte binary signature
     def self.sign(signing_key, message)
@@ -51,7 +51,7 @@ module SambaDave
     # Returns true if the message's Signature field matches the computed
     # HMAC-SHA256 (constant-time comparison to resist timing attacks).
     #
-    # @param signing_key [String] signing key (from derive_signing_key)
+    # @param signing_key [String] the session's 16-byte SigningKey (see Session#set_session_key)
     # @param message [String] full SMB2 message binary (header + body) with signature embedded
     # @return [Boolean] true if valid, false if invalid or message is too short
     def self.verify(signing_key, message)

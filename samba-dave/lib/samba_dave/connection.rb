@@ -157,6 +157,14 @@ module SambaDave
     # If the request breaks the session's signing rules, return an error result
     # to send instead of dispatching; otherwise nil. Only applies once a session
     # has a signing key (i.e. after SESSION_SETUP completes).
+    #
+    # NOTE (follow-up, issue #6): the final SESSION_SETUP round-2 request is not
+    # itself signature-checked here — its Session isn't stored until
+    # handle_round2 dispatches, so @sessions[session_id] is still nil at this
+    # point. MS-SMB2 §3.3.5.5.3 has a compliant server verify that request's
+    # signature. The NTLMv2 proof already authenticates the message and interop
+    # depends on our signing the *response* (which we do), so the practical risk
+    # is ~nil; this is a completeness gap tracked as a follow-up.
     def signing_violation(request_header, raw)
       session = @sessions[request_header.session_id]
       return nil unless session&.signing_key
