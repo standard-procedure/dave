@@ -165,23 +165,30 @@ module SambaDave
 
           filesystem = open_file.filesystem
 
-          # Read existing content
-          existing = begin
-            io = filesystem.read_content(open_file.path)
-            content = io.read.b
-            io.close
-            content
-          rescue Dave::NotFoundError
-            "".b
-          end
-
-          resized = if new_size <= existing.bytesize
-            existing[0, new_size]
+          if filesystem.respond_to?(:supports_partial_writes?) && filesystem.supports_partial_writes?
+            # Resize in place — the provider changes only the file length
+            # rather than re-transferring the whole object to grow/shrink it.
+            filesystem.truncate(open_file.path, new_size)
           else
-            existing + ("\x00".b * (new_size - existing.bytesize))
+            # Fallback for whole-file-only providers: read, resize, write back.
+            existing = begin
+              io = filesystem.read_content(open_file.path)
+              content = io.read.b
+              io.close
+              content
+            rescue Dave::NotFoundError
+              "".b
+            end
+
+            resized = if new_size <= existing.bytesize
+              existing[0, new_size]
+            else
+              existing + ("\x00".b * (new_size - existing.bytesize))
+            end
+
+            filesystem.write_content(open_file.path, StringIO.new(resized))
           end
 
-          filesystem.write_content(open_file.path, StringIO.new(resized))
           success_response
         rescue => _e
           { status: Constants::Status::ACCESS_DENIED, body: "" }

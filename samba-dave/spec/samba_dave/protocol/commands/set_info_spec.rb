@@ -225,6 +225,26 @@ RSpec.describe SambaDave::Protocol::Commands::SetInfo do
       expect(written[0, content.bytesize]).to eq(content)
       expect(written[content.bytesize..]).to eq("\x00" * (20 - content.bytesize))
     end
+
+    context "when the provider supports partial writes" do
+      before { allow(filesystem).to receive(:supports_partial_writes?).and_return(true) }
+
+      it "resizes via truncate, never reading or rewriting the whole object" do
+        allow(filesystem).to receive(:truncate)
+        expect(filesystem).not_to receive(:read_content)
+        expect(filesystem).not_to receive(:write_content)
+
+        of     = make_open_file
+        buf    = [5].pack("Q<")  # truncate to 5 bytes
+        result = described_class.handle(
+          build_set_info_body(of.file_id_bytes, info_type: 1, info_class: 0x14, buffer: buf),
+          open_file_table: open_file_table
+        )
+
+        expect(result[:status]).to eq(C::Status::SUCCESS)
+        expect(filesystem).to have_received(:truncate).with("/file.txt", 5)
+      end
+    end
   end
 
   describe ".handle — FileAllocationInformation (0x13)" do
