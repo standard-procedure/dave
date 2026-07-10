@@ -26,7 +26,7 @@ jobs:
       # Point Bundler (and setup-ruby's cache) at this component's Gemfile.
       BUNDLE_GEMFILE: ${{ github.workspace }}/${{ matrix.gem }}/Gemfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Ruby ${{ matrix.ruby }}
         uses: ruby/setup-ruby@v1
